@@ -101,7 +101,7 @@ function run_local_backup {
         report $? "unlock backup disk"
     sudo mount "/dev/mapper/$BACKUP_NAME" "/mnt/$BACKUP_NAME" ||\
         report $? "mount backup disk"
-    if [ -d "$BACKUP_DESTINATION" ]; then
+    if [ -d "$backup_destination" ]; then
         rsync   -av \
                 --progress \
                 --delete \
