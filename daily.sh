@@ -121,7 +121,7 @@ function run_remote_backup {
     # Remote backup skipping sensitive data
     local home_folder_name=$(basename $HOME)
     local backup_destination="$REMOTE_BACKUP/${home_folder_name}"
-    
+
     rsync   -avz \
             --progress \
             --delete \
@@ -142,7 +142,7 @@ function run_remote_backup {
 
 function handle_signal {
     >&2 echo "trapped signal during maintenance"
-    cleanup 1000
+    cleanup 113
 }
 
 trap handle_signal 1 2 3 6
