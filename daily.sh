@@ -55,7 +55,7 @@ function cleanup {
     # or there will be an infinite loop!
     # Cleanup can be quite slow.
     local rc=$1
-    >&2 echo "exiting cleanly"
+    >&2 echo "exiting cleanly . . ."
     # Get rid of lists of packages
     rm -f $HOME/package_list.txt
     rm -f $HOME/possible_orphan_packages.txt
@@ -70,6 +70,7 @@ function cleanup {
     if sudo cryptsetup status ${BACKUP_NAME} 1> /dev/null; then
         sudo cryptsetup close ${BACKUP_NAME} || report $? "locking backup drive"
     fi
+    >&2 echo ". . . all done"
     exit $rc
 }
 
