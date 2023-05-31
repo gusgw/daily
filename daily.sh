@@ -141,6 +141,7 @@ function run_remote_backup {
 }
 
 function handle_signal {
+    # cleanup and use error code 113 if we trap a signal
     >&2 echo "trapped signal during maintenance"
     cleanup 113
 }
