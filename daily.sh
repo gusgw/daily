@@ -107,6 +107,7 @@ function run_local_backup {
                 --delete \
                 --delete-excluded \
                 --exclude=$LOCAL_EXCLUDES \
+                --exclude={'.cache','.local'} \
                 "${HOME}/" \
                 "${backup_destination}/" ||\
             report $? "local backup via rsync"
@@ -126,13 +127,9 @@ function run_remote_backup {
             --progress \
             --delete \
             --delete-excluded \
-            --exclude="mnt" \
-            --exclude="tmp" \
-            --exclude=".ssh" \
-            --exclude=".gnupg" \
-            --exclude=".pki" \
-            --exclude=".cert" \
-            --exclude=".password-store" \
+            --exclude=$REMOTE_EXCLUDES \
+            --exclude={'.ssh','.gnupg','.pki','.cert','.password-store'} \
+            --exclude={'.cache','.local'} \
             "${HOME}/" \
             "${backup_destination}/" ||\
         report $? "remote backup via rsync"
@@ -152,11 +149,14 @@ cd || report $? "change to home folder" "script only works from home!"
 
 run_package_maintenance
 
-if [ -z "LOCAL_EXCLUDES" ]; then
-    export LOCAL_EXCLUDES="{'gaol', 'mnt', 'opt', 'tmp'}"
+if [ -z "$LOCAL_EXCLUDES" ]; then
+    export LOCAL_EXCLUDES="{'gaol','mnt','opt','tmp'}"
 fi
 run_local_backup
 
+if [ -z "$REMOTE_EXCLUDES" ]; then
+    export REMOTE_EXCLUDES="{mnt',tmp'}"
+fi
 run_remote_backup
 
 cleanup 0
