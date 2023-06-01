@@ -231,5 +231,8 @@ if [ -z "$REMOTE_EXCLUDES" ]; then
 fi
 run_remote_backup
 
+# System checks
+system_check
+
 # Cleanup and exit with code 0
 cleanup 0
