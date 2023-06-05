@@ -164,21 +164,26 @@ function run_package_maintenance {
     # Some pacman work taken from the Arch wiki:
     # https://wiki.archlinux.org/title/Pacman/Tips_and_tricks
     if [ "$(sudo pacman -Qtdq | wc -l)" -gt 0 ]; then
-        sudo pacman -Qtdq | sudo pacman -Rns - || report "$?" "remove orphan packages"
+        sudo pacman -Qtdq | sudo pacman -Rns - ||\
+            report "$?" "remove orphan packages"
     fi
     if [ "$(sudo pacman -Qqd | wc -l)" -gt 0 ]; then
-        sudo pacman -Qqd | sudo pacman -Rsu --print - 1> ${STAMP}-possible_orphan_list.txt ||\
+        sudo pacman -Qqd |\
+            sudo pacman -Rsu --print - 1> ${STAMP}-possible_orphan_list.txt ||\
             report "$?" "finding packages that might not be needed"
     fi
 
-    # Try a method of listing explicitly installed packages. Note recent update in the comments.
-    # https://unix.stackexchange.com/questions/409895/pacman-get-list-of-packages-installed-by-user
+    # Try a method of listing explicitly installed packages.
+    # Note recent update in the comments.
+    # https://unix.stackexchange.com/questions/409895/
+    #         pacman-get-list-of-packages-installed-by-user
     sudo pacman -Qqett 1> ${STAMP}-package_list.txt ||\
         report "$?" "create list of explicitly installed package"
 
     # Get optional dependencies
     # https://wiki.archlinux.org/title/Pacman/Tips_and_tricks
-    comm -13 <(pacman -Qqdt | sort) <(pacman -Qqdtt | sort) > ${STAMP}-optional_list.txt
+    comm -13 <(pacman -Qqdt | sort) <(pacman -Qqdtt | sort) >\
+        ${STAMP}-optional_list.txt
 
     # Get a list of AUR and other foreign packages
     # https://wiki.archlinux.org/title/Pacman/Tips_and_tricks
@@ -426,7 +431,8 @@ function network_check {
         sudo rfkill unblock wlan
         ping_router "$wireless"
     fi
-    if ! (check_intfc "$tunnel" && ping_check "$tunnel" wiki.archlinux.org); then
+    if ! (check_intfc "$tunnel" &&\
+          ping_check "$tunnel" wiki.archlinux.org); then
         start_tunnel $default_ovpn
     fi
     return 0
