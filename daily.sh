@@ -169,8 +169,9 @@ function run_package_maintenance {
     fi
     if [ "$(sudo pacman -Qqd | wc -l)" -gt 0 ]; then
         sudo pacman -Qqd |\
-            sudo pacman -Rsu --print - 1> ${STAMP}-possible_orphan_list.txt ||\
-            report "$?" "finding packages that might not be needed"
+            sudo pacman -Rsu --print - 1>\
+                        ${STAMP}-possible_orphan_list.txt ||\
+                report "$?" "finding packages that might not be needed"
     fi
 
     # Try a method of listing explicitly installed packages.
@@ -224,13 +225,16 @@ function run_local_backup {
     local home_folder_name=$(basename $HOME)
     local backup_destination="/mnt/${BACKUP_NAME}/${home_folder_name}"
     not_empty "date stamp" "$STAMP"
-    log_setting "name of the file with encryption key for local backup" "$KEY_FILE"
+    log_setting "name of the file with encryption key for local backup" \
+                "$KEY_FILE"
     log_setting "device path for local encrypted backup" "$BACKUP_DISK"
     log_setting "name of the backup" "$BACKUP_NAME"
     check_exists "${HOME}/.exclude_local"
 
     if [ -e "$BACKUP_DISK" ]; then
-        sudo cryptsetup open --key-file="$KEY_FILE" "$BACKUP_DISK" "$BACKUP_NAME" ||\
+        sudo cryptsetup open --key-file="$KEY_FILE"\
+                             "$BACKUP_DISK" \
+                             "$BACKUP_NAME" ||\
             report $? "unlock backup disk"
         sudo fsck -a "/dev/mapper/$BACKUP_NAME" ||\
             report $? "running file system check on /dev/mapper/$BACKUP_NAME"
@@ -248,10 +252,10 @@ function run_local_backup {
                         "${backup_destination}/" ||\
                     report $? "local backup via rsync"
         else
-            >&2 echo "${STAMP}: local backup destination not found - continuing . . ."
+            >&2 echo "${STAMP}: local backup destination not found"
         fi
     else
-        >&2 echo "${STAMP}:  local backup device not found - continuing . . ."
+        >&2 echo "${STAMP}:  local backup device not found"
     fi
 
     return 0
@@ -267,12 +271,14 @@ function cleanup_local_backup {
 
     # If the local backup is mounted, unmount
     if grep -qs "/mnt/${BACKUP_NAME}" /proc/mounts; then
-        sudo umount /dev/mapper/${BACKUP_NAME} || report $? "unmounting backup"
+        sudo umount /dev/mapper/${BACKUP_NAME} ||\
+            report $? "unmounting backup"
     fi
 
     # Do not leave the encrypted backup unlocked
     if sudo cryptsetup status ${BACKUP_NAME} 1> /dev/null; then
-        sudo cryptsetup close ${BACKUP_NAME} || report $? "locking backup drive"
+        sudo cryptsetup close ${BACKUP_NAME} ||\
+            report $? "locking backup drive"
     fi
 
     return 0
@@ -327,7 +333,10 @@ function firewall_active {
 function ping_router {
     # Make sure we can ping the local router
     local intf=$1
-    ping -q -w 1 -c 1 `ip route | grep default | grep "$intfc" | cut -d ' ' -f 3`
+    ping -q -w 1 -c 1 `ip route |\
+                       grep default |\
+                       grep "$intfc" |\
+                       cut -d ' ' -f 3`
     rc=$?
     if [ "$rc" -gt 0 ]; then
         report "$rc" "ping to local router via $intfc" "no network so stop"
@@ -358,7 +367,8 @@ function ping_check {
             return 0
         else
             # Packet loss rate between 0 and 100%
-            >&2 echo "${STAMP}: $packets_lost packets lost from ${tgt} via ${intfc}"
+            >&2 echo "${STAMP}: $packets_lost packets \
+                      lost from ${tgt} via ${intfc}"
             real_loss=$(echo $packets_lost | sed 's/.$//')
             if [[ ${real_loss} -gt ${max_loss} ]]; then
                 cleanup $NETWORK_ERROR
