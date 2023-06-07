@@ -238,15 +238,15 @@ function run_local_backup {
             report $? "mount backup disk"
         if [ -d "$backup_destination" ]; then
             echo $LOCAL_EXCLUDES
-            rsync   -av \
-                    --links \
-                    --progress \
-                    --delete \
-                    --delete-excluded \
-                    --exclude-from="${HOME}/.exclude_local" \
-                    "${HOME}/" \
-                    "${backup_destination}/" ||\
-                report $? "local backup via rsync"
+            sudo rsync  -av \
+                        --links \
+                        --progress \
+                        --delete \
+                        --delete-excluded \
+                        --exclude-from="${HOME}/.exclude_local" \
+                        "${HOME}/" \
+                        "${backup_destination}/" ||\
+                    report $? "local backup via rsync"
         else
             >&2 echo "${STAMP}: local backup destination not found - continuing . . ."
         fi
@@ -288,15 +288,15 @@ function run_remote_backup {
     log_setting "address and path of remote backup" "$REMOTE_BACKUP"
     check_exists "${tgt}/.exclude_remote"
 
-    rsync   -avz \
-            --links \
-            --progress \
-            --delete \
-            --delete-excluded \
-            --exclude-from="${tgt}/.exclude_remote" \
-            "${tgt}/" \
-            "${backup_destination}/" ||\
-        report "$?" "remote backup via rsync"
+    sudo rsync  -avz \
+                --links \
+                --progress \
+                --delete \
+                --delete-excluded \
+                --exclude-from="${tgt}/.exclude_remote" \
+                "${tgt}/" \
+                "${backup_destination}/" ||\
+            report "$?" "remote backup via rsync"
 
     return 0
 }
