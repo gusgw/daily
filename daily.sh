@@ -85,7 +85,7 @@ function check_exists {
     # Make sure a file or folder or link exists
     # then cleanup and quit if not
     local file_name=$1
-    log_setting "file name that must exist" "$file_name"
+    log_setting "file or directory name that must exist" "$file_name"
     if ! [ -e "$file_name" ]; then
         >&2 echo "${STAMP}: cannot find $file_name"
         cleanup "$MISSING_FILE"
@@ -791,7 +791,7 @@ function system_check {
 # https://stackoverflow.com/questions/8808415/
 # using-bash-to-tell-whether-or-not-a-drive-with-a-given-uuid-is-mounted
 function is_mounted_by_uuid {
-    local input_path=$(readlink -f /dev/disk/by-uuid/"$1")
+    local input_path=$(readlink -f "$1")
     local input_major_minor=$(stat -c '%T %t' "$input_path")
 
     log_setting "path to disk" "$input_path"
@@ -830,6 +830,10 @@ function sync_music_mp3 {
     log_setting "music player disk" "$player_disk"
     log_setting "music player mounted folder" "$player"
     log_setting "maximum number of subprocesses" "${MAX_SUBPROCESSES}"
+
+    check_exists "$music"
+    check_exists "$player_disk"
+    check_exists "$player"
 
     shopt -s globstar
     count=0
@@ -940,31 +944,31 @@ network_check "$MAIN_WIRED" "$MAIN_WIRELESS" "$MAIN_TUNNEL" "$DEFAULT_VPN"
 # System checks
 system_check
 
-# Run package related maintenance tasks
-run_package_maintenance
+# # Run package related maintenance tasks
+# run_package_maintenance
 
-# Run the backups
-run_local_backup
+# # Run the backups
+# run_local_backup
 
-# Unmount and send encrypted archive via rclone
-run_archive '/mnt/data/clear' \
-            '/mnt/data/archive' \
-            'clovis-mnt-data-archive-1ia'
+# # Unmount and send encrypted archive via rclone
+# run_archive '/mnt/data/clear' \
+#             '/mnt/data/archive' \
+#             'clovis-mnt-data-archive-1ia'
 
-# # If available prepare to offload files
-# if [ -n "${MONTH}" ]; then
-#     if [ -d "/mnt/data/${MONTH}" ]; then
-#         run_archive "/mnt/data/${MONTH}/clear" \
-#                     "/mnt/data/${MONTH}/offload" \
-#                     "clovis-mnt-data-${MONTH}-offload-1ia"
-#     fi
-# fi
+# # # If available prepare to offload files
+# # if [ -n "${MONTH}" ]; then
+# #     if [ -d "/mnt/data/${MONTH}" ]; then
+# #         run_archive "/mnt/data/${MONTH}/clear" \
+# #                     "/mnt/data/${MONTH}/offload" \
+# #                     "clovis-mnt-data-${MONTH}-offload-1ia"
+# #     fi
+# # fi
 
-# Set up folders for sharing via commercial cloud
-run_shared_preparation "${HOME}"
+# # Set up folders for sharing via commercial cloud
+# run_shared_preparation "${HOME}"
 
-# Run at least one remote backup
-all_remote_backups "${REMOTE_BACKUP}"
+# # Run at least one remote backup
+# all_remote_backups "${REMOTE_BACKUP}"
 
 # Only run if music player is available and if so mount first
 sync_music_mp3  "${HOME}/cloud/music" \
