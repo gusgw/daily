@@ -184,6 +184,7 @@ function cleanup {
     ######################################
 
     local rc=$1
+    >&2 echo "***"
     >&2 echo "${STAMP}: exiting cleanly with code ${rc}. . ."
     cleanup_package_maintenance
     cleanup_run_archive
@@ -286,7 +287,7 @@ function run_local_backup {
     # Local backup
 
     ##########################################################################
-    # USES GLOBAL VAIRABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
+    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
 
     >&2 echo "${STAMP}: run_local_backup"
@@ -342,7 +343,7 @@ function cleanup_local_backup {
     ######################################
 
     ##########################################################################
-    # USES GLOBAL VAIRABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
+    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
 
     killall rsync || report $? "kill the rsync processes"
@@ -370,7 +371,7 @@ function run_remote_backup {
 
     local src=$1
     local dst=$2
-    local src_folder_name=$(basename $src)
+    local src_folder_name="$(basename $src)"
     local backup_destination="${dst}/${src_folder_name}"
 
     log_setting "directory to backup" "$src"
@@ -489,7 +490,7 @@ function run_shared_preparation {
     # Prepare some files for sharing via SHARED_STAGING
 
     ##########################################################################
-    # USES GLOBAL VAIRABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
+    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
 
     >&2 echo "${STAMP}: run_shared_preparation"
@@ -523,7 +524,7 @@ function cleanup_shared_preparation {
     # Clean up after preparation of shared folders
 
     ##########################################################################
-    # USES GLOBAL VAIRABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
+    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
 
     killall rsync || report "$?" "kill the rsync processes"
@@ -775,7 +776,7 @@ function system_check {
     # Check services are running
 
     ##########################################################################
-    # USES GLOBAL VAIRABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
+    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
 
     >&2 echo "${STAMP}: system_check"
@@ -816,7 +817,7 @@ function is_mounted_by_uuid {
 function sync_music_mp3 {
 
     ##########################################################################
-    # USES GLOBAL VAIRABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
+    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
 
     >&2 echo "${STAMP}: sync_music_mp3"
@@ -827,7 +828,7 @@ function sync_music_mp3 {
 
     log_setting "music folder" "$music"
     log_setting "music player disk" "$player_disk"
-    log_setting "music player mouted folder" "$player"
+    log_setting "music player mounted folder" "$player"
     log_setting "maximum number of subprocesses" "${MAX_SUBPROCESSES}"
 
     shopt -s globstar
@@ -882,7 +883,7 @@ function all_remote_backups {
     # include archive to object storage.
 
     ##########################################################################
-    # USES GLOBAL VAIRABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
+    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
 
     >&2 echo "${STAMP}: all_remote_backups"
@@ -946,9 +947,9 @@ run_package_maintenance
 run_local_backup
 
 # Unmount and send encrypted archive via rclone
-# run_archive '/mnt/data/clear' \
-#             '/mnt/data/archive' \
-#             'clovis-mnt-data-archive-1ia'
+run_archive '/mnt/data/clear' \
+            '/mnt/data/archive' \
+            'clovis-mnt-data-archive-1ia'
 
 # # If available prepare to offload files
 # if [ -n "${MONTH}" ]; then
@@ -964,10 +965,10 @@ run_shared_preparation "${HOME}"
 
 # Run at least one remote backup
 all_remote_backups "${REMOTE_BACKUP}"
-# all_remote_backups "${REMOTE_BACKUP_EXTRA}"
 
 # Only run if music player is available and if so mount first
 sync_music_mp3  "${HOME}/cloud/music" \
+                "${MUSIC_PLAYER}" \
                 "${HOME}/mnt/lucy/Music files"
 
 # Cleanup and exit with code 0
