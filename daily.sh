@@ -24,6 +24,7 @@ MISSING_INPUT=60
 MISSING_FILE=61
 MISSING_FOLDER=62
 MISSING_DISK=63
+MISSING_MOUNT=64
 
 BAD_CONFIGURATION=70
 UNSAFE=71
@@ -35,6 +36,7 @@ NETWORK_ERROR=83
 TRAPPED_SIGNAL=113
 
 MAX_SUBPROCESSES=16
+SIMULTANEOUS_TRANSFERS=32
 
 WAIT=5.0
 
@@ -245,13 +247,13 @@ function run_package_maintenance {
 
     # Check for unowned files
     sudo pacreport --unowned-files 1>\
-        ${STAMP}-unowned_list.txt ||\
+            ${STAMP}-unowned_list.txt ||\
         report "$?" "finding unowned files"
 
     # Archive the pacman database
     wd=$(pwd)
     cd /var/lib/pacman/local &&\
-        sudo tar -cjf "${wd}/${STAMP}-pacman_database.tar.bz2" . ||\
+            sudo tar -cjf "${wd}/${STAMP}-pacman_database.tar.bz2" . ||\
         report "$?" "saving pacman database"
     cd ${wd} || report $? "return to working directory"
     sudo chown "${USER}:${USER}" "${STAMP}-pacman_database.tar.bz2" ||\
@@ -430,7 +432,7 @@ function remove_sensitive_data {
     local real_data="/mnt/data"
     local real_gaol="${real_home}/gaol"
 
-    log_setting "path for staging files to share" "$staging"
+    log_setting "path to remove sensitive data" "$staging"
     log_setting "path to home folder" "$real_home"
 
     log_setting "first in list of secret folders" "${SECRET_FOLDERS[0]}"
@@ -463,24 +465,38 @@ function remove_sensitive_data {
     # Links handled separately as a reminder.
     for f in ${SECRET_FOLDERS[@]}; do
         log_setting "secret folder to remove" "$f"
-        find "${staging}/" -type l -name "$f" -exec rm -f {} \; 2> /dev/null ||\
-            report "$?" "removing secret folders"
-        find "${staging}/" -type d -name "$f" -exec rm -rf {} \; 2> /dev/null ||\
-            report "$?" "removing secret folders"
+
+        find "${staging}/" -type l -name "$f" -exec rm -f {} \;
+        rc=$?
+        [ "$rc" -gt 0 ] && report "$rc" "removing secret folders (links)"
+
+        find "${staging}/" -type d -name "$f" -exec rm -rf {} \;
+        rc=$?
+        [ "$rc" -gt 0 ] && report "$rc" "removing secret folders recursively"
+
     done
     for f in ${SENSITIVE_FOLDERS[@]}; do
         log_setting "sensitive folder to remove" "$f"
-        find "${staging}/" -type l -name "$f"  -exec rm -f {} \; 2> /dev/null ||\
-            report "$?" "removing sensitive folders"
-        find "${staging}/" -type d -name "$f"  -exec rm -rf {} \; 2> /dev/null ||\
-            report "$?" "removing sensitive folders"
+
+        find "${staging}/" -type l -name "$f"  -exec rm -f {} \;
+        rc=$?
+        [ "$rc" -gt 0 ] && report "$rc" "removing sensitive folders (links)"
+
+        find "${staging}/" -type d -name "$f"  -exec rm -rf {} \;
+        rc=$?
+        [ "$rc" -gt 0 ] && report "$rc" "removing sensitive folders recursively"
+
     done
     for f in ${SECRET_FILES[@]}; do
         log_setting "secret file to remove" "$f"
-        find "${staging}/" -type l -name "$f"  -exec rm -f {} \; 2> /dev/null ||\
-            report "$?" "removing secret files"
-        find "${staging}/" -type f -name "$f"  -exec rm -f {} \; 2> /dev/null ||\
-            report "$?" "removing secret files"
+
+        find "${staging}/" -type l -name "$f"  -exec rm -f {} \;
+        rc=$?
+        [ "$rc" -gt 0 ] && report "$rc" "removing secret files (links)"
+
+        find "${staging}/" -type f -name "$f"  -exec rm -f {} \;
+        rc=$?
+        [ "$rc" -gt 0 ] && report "$rc" "removing secret files"
     done
 
     return 0
@@ -495,25 +511,33 @@ function run_shared_preparation {
 
     >&2 echo "${STAMP}: run_shared_preparation"
 
-    local src=$1
+    local src=$(realpath "$1")
     local src_folder_name=$(basename $src)
-    local staging_area="${SHARED_STAGING}/${src_folder_name}"
+    local staging_area=$(realpath "${SHARED_STAGING}/${src_folder_name}")
 
     log_setting "directory to backup" "$src"
-    log_setting "address and path of staging areas" "$SHARED_STAGING"
+    log_setting "path to staging areas" "$staging_area"
     check_exists "${src}/.include_shared"
 
     while read f; do
-        check_exists "${src}/${f}"
-        mkdir -p "${staging_area}/${f}"
-        rsync  -av \
-               --links \
-               --progress \
-               --delete \
-               "${src}/${f}/" \
-               "${staging_area}/${f}/" ||\
-            report "$?" "staging files via rsync"
-    done < .include_shared
+        echo $f
+        if [ -n "$f" ]; then
+            check_exists "${src}/${f}"
+            if [[ "$staging_area" != "${src}/${f}"* ]]; then
+                mkdir -p "${staging_area}/${f}"
+                rsync  -av \
+                       --links \
+                       --progress \
+                       --delete \
+                       "${src}/${f}/" \
+                       "${staging_area}/${f}/" ||\
+                    report "$?" "staging files via rsync"
+            else
+                >&2  echo "${STAMP}: $staging_area is in ${src}/${f}"
+                cleanup "$BAD_CONFIGURATION"
+            fi
+        fi
+    done < "${src}/.include_shared"
 
     remove_sensitive_data "${SHARED_STAGING}"
 
@@ -537,6 +561,10 @@ function cleanup_shared_preparation {
 
 function run_archive {
     # Run an encrypted archive to S3
+
+    ##########################################################################
+    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
+    ##########################################################################
 
     >&2 echo "${STAMP}: run_archive"
 
@@ -588,13 +616,18 @@ function run_archive {
 
             rclone sync --config  "$conf" \
                         --progress \
-                        --transfers 16 \
+                        --transfers "${SIMULTANEOUS_TRANSFERS}" \
                         --delete-excluded \
                         --exclude cryfs.config \
                         "${src}/" \
                         "${remote}:" ||\
                 report $? "sync archive to remote"
+        else
+            >&2 echo "${STAMP}: failed to remove sensitive data"
         fi
+    else
+        >&2 echo "${STAMP}: ${src} not mounted, cannot check security"
+        return "${MISSING_MOUNT}"
     fi
 
     return 0
@@ -814,6 +847,26 @@ function is_mounted_by_uuid {
     fi
 }
 
+function size_distribution {
+    local folder=$1
+    local glob=$2
+
+    log_setting "folder for file size distribution" "$folder"
+    log_setting "glob for file size distribution" "$glob"
+
+    check_exists "$folder"
+
+    awk1='{size[int(log($5)/log(2))]++}'
+    awk2='{for (i in size) printf("%10d %3d\n", 2^i, size[i])}'
+
+    find "${folder}" -type f -name "${glob}" -print0 |\
+        xargs -0 ls -l |\
+        awk "${awk1}END${awk2}" |\
+        sort -n
+
+    return 0
+}
+
 function sync_music_mp3 {
 
     ##########################################################################
@@ -825,6 +878,7 @@ function sync_music_mp3 {
     local music=$1
     local player_disk=$2
     local player=$3
+    local clean=$4
 
     log_setting "music folder" "$music"
     log_setting "music player disk" "$player_disk"
@@ -833,47 +887,68 @@ function sync_music_mp3 {
 
     check_exists "$music"
     check_exists "$player_disk"
+
+    mp3_minimum_size=1048576
+
+    echo "***"
+    echo "m4a"
+    size_distribution "$music" "*.m4a"
+    echo "***"
+    echo "mp3 before conversion"
+    size_distribution "$music" "*.mp3"
+    echo "***"
+    echo "removing files"
+    find "${music}" -type f -name "*.mp3" \
+            -size -${mp3_minimum_size}c -exec rm {} \; ||\
+        report "$?" "removing suspiciously small mp3 files"
+    echo "***"
+    if [ "$clean" == "true" ]; then
+        echo "remove mp3 files converted from m4a"
+        find "${music}" -name "*.m4a" |\
+            parallel --jobs "${MAX_SUBPROCESSES}" \
+                rm -f {.}.mp3
+        echo "***"
+    fi
+    echo "converting from m4a"
+    find "${music}" -name "*.m4a" |\
+            parallel --jobs "${MAX_SUBPROCESSES}" \
+                nice -n 19 ffmpeg  -v 5 -n -i {} \
+                        -acodec libmp3lame \
+                        -ac 2 \
+                        -ab 320k \
+                        {.}.mp3
+    echo "***"
+    echo "mp3 after conversion"
+    size_distribution "$music" "*.mp3"
+    echo "***"
+
     check_exists "$player"
 
-    shopt -s globstar
-    count=0
-    for f in ${music}/**/*.m4a; do
-        short=$(basename "$f")
-        echo $short
-        if [ ! -e "${f/m4a/mp3}" ]; then
-            ffmpeg  -v 5 -y -i "$f" \
-                    -acodec libmp3lame \
-                    -ac 2 \
-                    -ab 192k \
-                    "${f/m4a/mp3}" ||\
-                report "$?" "converting $short" &
-        fi
-        count=$((count+1))
-        if [ "$count" -gt "${MAX_SUBPROCESSES}" ]; then
-            wait
-            count=0
-        fi
-    done
-
     if is_mounted_by_uuid "$player_disk"; then
-
+        echo "check for player"
         if [ -e "$player" ]; then
-
-            sudo rsync  -av --no-perms --no-owner --no-group \
+            echo "looping over artists"
+            while read artist; do
+                echo "$artist"
+                check_exists "${music}/${artist}"
+                mkdir -p "${player}/${artist}"
+                rsync   -av --no-perms --no-owner --no-group \
+                        --prune-empty-dirs \
                         --links \
                         --progress \
                         --delete \
-                        --include="*/" \
+                        --delete-excluded \
+                        --include=*/"" \
                         --include="*.mp3" \
                         --exclude="*" \
-                        "${music}/" \
-                        "${player}/" ||\
+                        "${music}/${artist}/" \
+                        "${player}/${artist}/" ||\
                     report "$?" "sync music to player"
-
+                echo "***"
+            done < "${music}/.include_player"
         else
             return "$MISSING_FOLDER"
         fi
-
     else
         return "$MISSING_DISK"
     fi
@@ -938,37 +1013,41 @@ set_stamp
 # Set the month for use in the encrypted folder to offload,
 # and other occasional maintenance.
 set_month
+
 # Check the network
-network_check "$MAIN_WIRED" "$MAIN_WIRELESS" "$MAIN_TUNNEL" "$DEFAULT_VPN"
+network_check   "$MAIN_WIRED" \
+                "$MAIN_WIRELESS" \
+                "$MAIN_TUNNEL" \
+                "$DEFAULT_VPN"
 
 # System checks
 system_check
 
-# # Run package related maintenance tasks
-# run_package_maintenance
+# Run package related maintenance tasks
+run_package_maintenance
 
-# # Run the backups
-# run_local_backup
+# Run the backups
+run_local_backup
 
-# # Unmount and send encrypted archive via rclone
-# run_archive '/mnt/data/clear' \
-#             '/mnt/data/archive' \
-#             'clovis-mnt-data-archive-1ia'
+# Unmount and send encrypted archive via rclone
+run_archive '/mnt/data/clear' \
+            '/mnt/data/archive' \
+            'clovis-mnt-data-archive-std'
 
-# # # If available prepare to offload files
-# # if [ -n "${MONTH}" ]; then
-# #     if [ -d "/mnt/data/${MONTH}" ]; then
-# #         run_archive "/mnt/data/${MONTH}/clear" \
-# #                     "/mnt/data/${MONTH}/offload" \
-# #                     "clovis-mnt-data-${MONTH}-offload-1ia"
-# #     fi
-# # fi
+# If available prepare to offload files
+if [ -n "${MONTH}" ]; then
+    if [ -d "/mnt/data/${MONTH}" ]; then
+        run_archive "/mnt/data/${MONTH}/clear" \
+                    "/mnt/data/${MONTH}/offload" \
+                    "clovis-mnt-data-${MONTH}-offload-gda"
+    fi
+fi
 
-# # Set up folders for sharing via commercial cloud
-# run_shared_preparation "${HOME}"
+# Set up folders for sharing via commercial cloud
+run_shared_preparation "${HOME}"
 
-# # Run at least one remote backup
-# all_remote_backups "${REMOTE_BACKUP}"
+# Run at least one remote backup
+all_remote_backups "${REMOTE_BACKUP}"
 
 # Only run if music player is available and if so mount first
 sync_music_mp3  "${HOME}/cloud/music" \
