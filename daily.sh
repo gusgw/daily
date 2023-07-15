@@ -229,6 +229,10 @@ function run_package_maintenance {
                 report "$?" "finding packages that might not be needed"
     fi
 
+    # Record disk space used by packages
+    sudo expac -H M '%m\t%n' 1> ${STAMP}-package_sizes.txt ||\
+        report "$?" "finding disk space used by each package"
+
     # Try a method of listing explicitly installed packages.
     # Note recent update in the comments.
     # https://unix.stackexchange.com/questions/409895/
@@ -907,6 +911,9 @@ function sync_music_mp3 {
         find "${music}" -name "*.m4a" |\
             parallel --jobs "${MAX_SUBPROCESSES}" \
                 rm -f {.}.mp3
+        echo "***"
+    else
+        echo "not cleaning"
         echo "***"
     fi
     echo "converting from m4a"
