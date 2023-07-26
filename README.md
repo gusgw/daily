@@ -60,15 +60,21 @@ The following signals are caught, at which time the `cleanup`
 routine is called so that no mess is left behind when the
 script exits.
 
-* 1     `SIGHUP`
+* `SIGHUP` or signal 1
 
-* 2     `SIGINT`
+* `SIGINT` or signal 2
 
-* 3     `SIGQUIT`
+* `SIGQUIT` or signal 3
 
-* 6     `SIGABRT`
+* `SIGABRT` or signal 6
 
-* 15    `SIGTERM`
+* `SIGTERM` or signal 15
+
+Useful descriptions of signals can be found at
+
+[https://www.computerhope.com/unix/signals.htm](https://www.computerhope.com/unix/signals.htm)
+
+and [https://github.com/torvalds/linux/blob/master/include/linux/signal.h](https://github.com/torvalds/linux/blob/master/include/linux/signal.h).
 
 ## Package management
 
