@@ -390,7 +390,7 @@ function run_remote_backup {
 
     for f in ${SECRET_FOLDERS[@]}; do
         if [ -d "$f" ]; then
-            check_contains "${src/.exclude_remote}" "$f"
+            check_contains "${src}/.exclude_remote" "$f"
         fi
     done
 
