@@ -1,7 +1,7 @@
 # Daily tasks
 
-I keep here shell functions that run routine maintenance
-tasks daily on a Linux workstation. They are particular
+This script runs shell functions for routine maintenance
+tasks on a Linux workstation. They are particular
 to my set up and I do not know if they are useful for
 others.
 
@@ -59,6 +59,16 @@ exported.
 The following signals are caught, at which time the `cleanup`
 routine is called so that no mess is left behind when the
 script exits.
+
+* 1     `SIGHUP`
+
+* 2     `SIGINT`
+
+* 3     `SIGQUIT`
+
+* 6     `SIGABRT`
+
+* 15    `SIGTERM`
 
 ## Package management
 
