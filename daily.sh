@@ -1035,7 +1035,7 @@ function handle_signal {
 }
 
 # Start by setting a handler for signals that stop work
-trap handle_signal 1 2 3 6
+trap handle_signal 1 2 3 6 15
 
 # Set a stamp for use in messages and file names
 set_stamp
