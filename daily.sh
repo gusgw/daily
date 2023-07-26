@@ -1,25 +1,9 @@
 #! /bin/bash
 
-# Commands used here with sudo should
-# run without a password.
+# Daily maintenance tasks
 
-# Access via ssh must be set up with no passphrase.
-
-# Set a key file to decrypt the backup
-# disk in the environment variable KEY_FILE.
-
-# Make sure the backup disk is set in
-# the environment variable BACKUP_DISK.
-
-# Make sure the backup name is set in
-# the environment variable BACKUP_NAME.
-# This will be used as the device name
-# for the unlocked
-
-# A path to a remote backup should
-# be in $REMOTE_BACKUP, and a second in
-# $REMOTE_BACKUP_EXTRA.
-
+# Return codes
+#################################
 MISSING_INPUT=60
 MISSING_FILE=61
 MISSING_FOLDER=62
@@ -34,17 +18,26 @@ SECURITY_FAILURE=81
 NETWORK_ERROR=83
 
 TRAPPED_SIGNAL=113
+#################################
 
+# Limits for parallel work
 MAX_SUBPROCESSES=16
 SIMULTANEOUS_TRANSFERS=32
 
+# Set a wait time in seconds
+# for any task that is attempted
+# repeatedly
 WAIT=5.0
 
-UNITS_TO_CHECK=( 'syncthing@gusgw.service' 'sshd.service' )
+# Make sure these units are active
+UNITS_TO_CHECK=( "syncthing@${USER}.service" 'sshd.service' )
 
+# Automatically ensure that these folders and files
+# are not copied to remote backups etc.
 SECRET_FOLDERS=( '.ssh' '.gnupg' '.cert' '.pki' '.password-store' )
 SECRET_FILES=( "*.asc" "*.key" "*.pem" "id_rsa*" "id_dsa*" "id_ed25519*" )
 
+# Also keep these from being sent to cloud storage
 SENSITIVE_FOLDERS=( '.git' '.stfolder' '.stversions' '.local' )
 
 function set_stamp {
@@ -81,6 +74,7 @@ function log_setting {
     not_empty "date stamp" "${STAMP}"
     not_empty "$description" "$setting"
     >&2 echo "${STAMP}: ${description} is ${setting}"
+    return 0
 }
 
 function check_exists {
@@ -125,6 +119,24 @@ function path_as_name {
     return 0
 }
 
+function report {
+    # Inform the user of a non-zero return
+    # code, and if an exit
+    # message is provided as a third argument
+    # also exit cleanly
+    local rc=$1
+    local description=$2
+    local exit_message=$3
+    >&2 echo "${STAMP}: ${description} exited with code $rc"
+    if [ -z "$exit_message" ]; then
+        >&2 echo "${STAMP}: continuing . . ."
+    else
+        >&2 echo "${STAMP}: $exit_message"
+        cleanup $rc
+    fi
+    return $rc
+}
+
 function make_active {
     # Make sure a systemd unit is active
     local unit=$1
@@ -144,27 +156,14 @@ function make_active {
     return 0
 }
 
-function report {
-    # Inform the user of a non-zero return
-    # code, cleanup, and if an exit
-    # message is provided as a third argument
-    # also exit
-    local rc=$1
-    local description=$2
-    local exit_message=$3
-    >&2 echo "${STAMP}: ${description} exited with code $rc"
-    if [ -z "$exit_message" ]; then
-        >&2 echo "${STAMP}: continuing . . ."
-    else
-        >&2 echo "${STAMP}: $exit_message"
-        cleanup $rc
-    fi
-    return $rc
-}
-
 function slow {
     # Wait for all processes with given name to disappear
     # rsync in particular seems to hang around
+
+    ##########################################################
+    # The number of seconds to wait is globally set as $WAIT #
+    ##########################################################
+
     local pname=$1
     log_setting "program name to wait for" "$pname"
     for pid in $(pgrep $pname); do
@@ -280,8 +279,9 @@ function cleanup_package_maintenance {
 
     rm -f ${STAMP}-missing_system_file_list.txt
     rm -f ${STAMP}-altered_system_file_list.txt
-    rm -f ${STAMP}-package_list.txt
     rm -f ${STAMP}-possible_orphan_list.txt
+    rm -f ${STAMP}-package_sizes.txt
+    rm -f ${STAMP}-package_list.txt
     rm -f ${STAMP}-optional_list.txt
     rm -f ${STAMP}-foreign_list.txt
     rm -f ${STAMP}-unowned_list.txt
@@ -373,6 +373,10 @@ function cleanup_local_backup {
 function run_remote_backup {
     # Remote backup skipping sensitive data
 
+    ##########################################################################
+    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
+    ##########################################################################
+
     >&2 echo "${STAMP}: run_remote_backup"
 
     local src=$1
@@ -383,6 +387,12 @@ function run_remote_backup {
     log_setting "directory to backup" "$src"
     log_setting "address and path of remote backups" "$dst"
     check_exists "${src}/.exclude_remote"
+
+    for f in ${SECRET_FOLDERS[@]}; do
+        if [ -d "$f" ]; then
+            check_contains "${src/.exclude_remote}" "$f"
+        fi
+    done
 
     sudo rsync  -avz \
                 --links \
@@ -443,18 +453,21 @@ function remove_sensitive_data {
     log_setting "first in list of secret files" "${SECRET_FILES[0]}"
     log_setting "first in list of sensitive folders" "${SENSITIVE_FOLDERS[0]}"
 
+    # Do not apply this function to home
     if [ "$staging" == "$real_home" ]; then
         # Do not use the cleanup function here because it calls this function
         >&2 echo "${STAMP}: unsafe to remove sensitive data from home"
         return "$UNSAFE"
     fi
-
+    
+    # Do not apply to the whole of the data partition
     if [ "$staging" == "$real_data" ]; then
         # Do not use the cleanup function here because it calls this function
         >&2 echo "${STAMP}: unsafe to remove sensitive data from all of /mnt/data"
         return "$UNSAFE"
     fi
 
+    # Only apply this to gaol or subfolders of the data partition
     if [[ "$staging" != "${real_gaol}"* ]]; then
         if [[ "$staging" != "${real_data}"* ]]; then
             # Do not use the cleanup function here because it calls this function
@@ -566,9 +579,14 @@ function cleanup_shared_preparation {
 function run_archive {
     # Run an encrypted archive to S3
 
-    ##########################################################################
-    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
-    ##########################################################################
+    ##########################################################
+    # The number of seconds to wait is globally set as $WAIT #
+    ##########################################################
+
+    ###################################################
+    # The number of transfers at once is globally set #
+    # as $SIMULTANEOUS_TRANSFERS                      #
+    ###################################################
 
     >&2 echo "${STAMP}: run_archive"
 
@@ -673,6 +691,11 @@ function firewall_active {
 
 function ping_router {
     # Make sure we can ping the local router
+
+    ##########################################################
+    # The number of seconds to wait is globally set as $WAIT #
+    ##########################################################
+
     local intfc=$1
     log_setting "ping router via interface" "$intfc"
     rc=1
@@ -812,9 +835,9 @@ function network_check {
 function system_check {
     # Check services are running
 
-    ##########################################################################
-    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
-    ##########################################################################
+    ##################################################################
+    # System units to check are set globally in ${UNITS_TO_CHECK[@]} #
+    ##################################################################
 
     >&2 echo "${STAMP}: system_check"
 
