@@ -9,7 +9,6 @@ MISSING_FILE=61
 MISSING_FOLDER=62
 MISSING_DISK=63
 MISSING_MOUNT=64
-
 BAD_CONFIGURATION=70
 UNSAFE=71
 
@@ -536,6 +535,14 @@ function run_shared_preparation {
     log_setting "path to staging areas" "$staging_area"
     check_exists "${src}/.include_shared"
 
+    # Clean out all folders from the staging area
+    for f in ${staging_area}/*; do
+        if [ -d "$f" ]; then
+            rm -rf $f
+        fi
+    done
+
+    # Synchroinuse to staging
     while read f; do
         echo $f
         if [ -n "$f" ]; then
@@ -556,6 +563,7 @@ function run_shared_preparation {
         fi
     done < "${src}/.include_shared"
 
+    # Remove anything we do not share via cloud
     remove_sensitive_data "${SHARED_STAGING}"
 
     return 0
