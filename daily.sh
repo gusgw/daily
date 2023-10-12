@@ -1088,9 +1088,9 @@ run_shared_preparation "${HOME}"
 all_remote_backups "${REMOTE_BACKUP}"
 
 # Only run if music player is available and if so mount first
-sync_music_mp3  "${HOME}/cloud/music" \
-                "${MUSIC_PLAYER}" \
-                "${HOME}/mnt/lucy/Music files"
+# sync_music_mp3  "${HOME}/cloud/music" \
+#                 "${MUSIC_PLAYER}" \
+#                 "${HOME}/mnt/lucy/Music files"
 
 # Cleanup and exit with code 0
 cleanup 0
