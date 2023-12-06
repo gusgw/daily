@@ -296,7 +296,7 @@ function run_local_backup {
     ##########################################################################
 
     >&2 echo "${STAMP}: run_local_backup"
-    
+
     local home_folder_name=$(basename $HOME)
     local backup_destination="/mnt/${BACKUP_NAME}/${home_folder_name}"
     not_empty "date stamp" "$STAMP"
@@ -458,7 +458,7 @@ function remove_sensitive_data {
         >&2 echo "${STAMP}: unsafe to remove sensitive data from home"
         return "$UNSAFE"
     fi
-    
+
     # Do not apply to the whole of the data partition
     if [ "$staging" == "$real_data" ]; then
         # Do not use the cleanup function here because it calls this function
@@ -602,7 +602,7 @@ function run_archive {
     local src=$(realpath "$2")
     local remote=$3
     local conf="${HOME}/$(hostnamectl hostname)-rclone.conf"
-    
+
     log_setting "cleartext to archive" "$clear"
     log_setting "folder to archive" "$src"
     log_setting "remote" "$remote"
@@ -627,9 +627,9 @@ function run_archive {
                 report $? "construct filename"
             contents="${HOME}/${STAMP}-${listing}.txt"
 
-            echo "cryfs@${src} ${clear}" >> ${contents} 
+            echo "cryfs@${src} ${clear}" >> ${contents}
             tree "${clear}" 1>> ${contents} ||\
-                report $? "save the tree of archived folders" 
+                report $? "save the tree of archived folders"
 
             cryfs-unmount "${clear}" ||\
                 report $? "unmounting encrypted archive" \
@@ -1023,7 +1023,7 @@ function all_remote_backups {
             run_remote_backup "${HOME}" "${destination}"
 
             run_remote_backup '/mnt/data/archive' "${destination}"
-            
+
             if [ -n "${MONTH}" ]; then
                 if [ -d "/mnt/data/${MONTH}" ]; then
                     run_remote_backup "/mnt/data/${MONTH}" "${destination}"
@@ -1081,11 +1081,24 @@ if [ -n "${MONTH}" ]; then
     fi
 fi
 
+# Run archive for any monthly offloads remaining
+for m in {9..10}; do
+    mth="2023$(printf '%02d' $m)"
+    log_setting "past month" "${mth}"
+    if [ -n "${mth}" ]; then
+        if [ -d "/mnt/data/${mth}" ]; then
+            run_archive "/mnt/data/${mth}/clear" \
+                        "/mnt/data/${mth}/offload" \
+                        "clovis-mnt-data-${mth}-offload-gda"
+        fi
+    fi
+done
+
 # Set up folders for sharing via commercial cloud
 run_shared_preparation "${HOME}"
 
 # Run at least one remote backup
-all_remote_backups "${REMOTE_BACKUP}"
+# all_remote_backups "${REMOTE_BACKUP}"
 
 # Only run if music player is available and if so mount first
 # sync_music_mp3  "${HOME}/cloud/music" \
