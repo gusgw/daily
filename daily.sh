@@ -39,6 +39,9 @@ SECRET_FILES=( "*.asc" "*.key" "*.pem" "id_rsa*" "id_dsa*" "id_ed25519*" )
 # Also keep these from being sent to cloud storage
 SENSITIVE_FOLDERS=( '.git' '.stfolder' '.stversions' '.local' )
 
+#################################
+# Utility functions
+
 function set_stamp {
     # Store a stamp used to label files
     # and messages created in this script.
@@ -55,7 +58,10 @@ function set_month {
 
 function not_empty {
     # Ensure that an expression is not empty
-    # then cleanup and quit if it is
+    # then cleanup and quit if it is.
+    # Generally this is used to check that parameters
+    # have been provided so the return code when the
+    # expression is empty is ${MISSING_INPUT}.
     local description=$1
     local check=$2
     if [ -z "$check" ]; then
@@ -109,6 +115,9 @@ function check_contains {
 }
 
 function path_as_name {
+    # Convert a path to a string that
+    # can be used as a name. This is sometimes
+    # useful for naming archives and so on.
     local path=$1
     not_empty "path to convert to a name" "$path"
     echo "$path" |\
@@ -136,25 +145,6 @@ function report {
     return $rc
 }
 
-function make_active {
-    # Make sure a systemd unit is active
-    local unit=$1
-    log_setting "unit to activate" "$unit"
-
-    if ! sudo systemctl is-active --quiet "$unit"; then
-        sudo systemctl start "$unit" ||\
-            report $? "starting $unit"
-        if sudo systemctl is-failed --quiet "$unit"; then
-            sudo systemctl status --no-pager --lines=10 "$unit" ||\
-                report $? "get status of $unit"
-            cleanup "$SYSTEM_UNIT_FAILURE"
-        fi
-    fi
-    sudo systemctl status --no-pager --lines=0 "$unit" ||\
-        report $? "get status of $unit"
-    return 0
-}
-
 function slow {
     # Wait for all processes with given name to disappear
     # rsync in particular seems to hang around
@@ -172,6 +162,9 @@ function slow {
         done
     done
 }
+
+#################################
+# Functions that run daily tasks
 
 function cleanup {
 
@@ -193,6 +186,200 @@ function cleanup {
     cleanup_shared_preparation
     >&2 echo "${STAMP}: . . . all done with code ${rc}"
     exit $rc
+}
+
+function firewall_active {
+    # Check the firewall is up
+    not_empty "date stamp" "$STAMP"
+
+    >&2 echo "${STAMP}: firewall_active"
+
+    if sudo ufw status | grep -qs "Status: inactive"; then
+        sudo ufw enable || report $? "enable firewall"
+        if sudo ufw status | grep -qs "Status: inactive"; then
+            >&2 echo "${STAMP}: failed to activate firewall"
+            return "$SECURITY_FAILURE"
+        fi
+    fi
+    sudo ufw status numbered || report $? "state firewall rules"
+    return 0
+}
+
+function ping_router {
+    # Make sure we can ping the local router
+
+    ##########################################################
+    # The number of seconds to wait is globally set as $WAIT #
+    ##########################################################
+
+    local intfc=$1
+    log_setting "ping router via interface" "$intfc"
+    rc=1
+    while  [ "$rc" -gt 0 ]; do
+        sleep ${WAIT}
+        ping -q -w 1 -c 1 `ip route |\
+                           grep default |\
+                           grep "$intfc" |\
+                           cut -d ' ' -f 3`
+        rc=$?
+    done
+    if [ "$rc" -gt 0 ]; then
+        report "$rc" "ping to local router via $intfc" "no network so stop"
+    fi
+    return 0
+}
+
+function ping_check {
+    # Check ping via given interface to given url
+    local intfc=$1
+    local tgt=$2
+    not_empty "date stamp" "$STAMP"
+    log_setting "interface to check" "$intfc"
+    log_setting "url for ping" "$tgt"
+
+    # Max lost packet percentage
+    max_loss=50
+    packet_count=10
+    timeout=20
+    packets_lost=$(ping -W $timeout -c $packet_count -I $intfc $tgt |\
+                   grep % |\
+                   awk '{print $6}')
+    if ! [ -n "$packets_lost" ] || [ "$packets_lost" == "100%" ]; then
+        cleanup $NETWORK_ERROR
+        >&2 echo "${STAMP}: all packets lost from ${tgt} via ${intfc}"
+    else
+        if [ "${packets_lost}" == "0%" ]; then
+            return 0
+        else
+            # Packet loss rate between 0 and 100%
+            >&2 echo "${STAMP}: $packets_lost packets \
+                      lost from ${tgt} via ${intfc}"
+            real_loss=$(echo $packets_lost | sed 's/.$//')
+            if [[ ${real_loss} -gt ${max_loss} ]]; then
+                cleanup $NETWORK_ERROR
+            else
+                return 0
+            fi
+        fi
+    fi
+}
+
+function check_intfc {
+    # Check an interface is available
+    local intfc=$1
+    log_setting "interface to check" "$intfc"
+    intfc_list=$(ip link |\
+                 sed -n  '/^[0-9]*:/p' | grep UP | grep -v DOWN |\
+                 sed 's/^[0-9]*: \([0-9a-z]*\):.*/\1/')
+    for i in $intfc_list; do
+        if [ "$i" == "$intfc" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+function check_single_tunnel {
+    # Make sure there is only a single tunnel set up
+
+    >&2 echo "${STAMP}: check_single_tunnel"
+
+    count=$(ip link |\
+            sed -n  '/^[0-9]*:/p' |\
+            sed 's/^[0-9]*: \([0-9a-z]*\):.*/\1/' |\
+            grep tun |\
+            wc -l)
+    if [ "$count" -eq 0 ]; then
+        >&2 echo "${STAMP}: tunnel not found"
+        return 1
+    else
+        if [ "$count" -gt 1 ]; then
+            >&2 echo "${STAMP}: too many tunnels found"
+            cleanup "$NETWORK_ERROR"
+        else
+            return 0
+        fi
+    fi
+}
+
+function start_tunnel {
+    # Start the OpenVPN encrypted tunnel
+
+    >&2 echo "${STAMP}: start_tunnel"
+
+    local ovpn=$1
+    log_setting "OpenVPN configuration to start" "$ovpn"
+    killall openvpn || report $? "stopping any tunnel"
+    slow openvpn
+    sudo openvpn --daemon --config "$ovpn"
+    while ! check_single_tunnel; do
+        sleep "$WAIT"
+    done
+    return 0
+}
+
+function network_check {
+
+    >&2 echo "${STAMP}: network_check"
+
+    local wired=$1
+    local wireless=$2
+    local tunnel=$3
+    local default_ovpn=$4
+
+    # Make source network connection is as expected
+    log_setting "usual wired interface" "$wired"
+    log_setting "usual wireless interface" "$wireless"
+    log_setting "tunnel interface" "$tunnel"
+    log_setting "default VPN configuration" "$default_ovpn"
+
+    firewall_active
+    if check_intfc "$wired"; then
+        sudo rfkill block wlan
+        ping_router "$wired"
+    else
+        sudo rfkill unblock wlan
+        ping_router "$wireless"
+    fi
+    if ! (check_intfc "$tunnel" &&\
+          ping_check "$tunnel" wiki.archlinux.org); then
+        start_tunnel $default_ovpn
+    fi
+    return 0
+}
+
+function system_check {
+    # Check services are running
+
+    ##################################################################
+    # System units to check are set globally in ${UNITS_TO_CHECK[@]} #
+    ##################################################################
+
+    >&2 echo "${STAMP}: system_check"
+
+    for svc in "${UNITS_TO_CHECK[@]}"; do
+        make_active "${svc}"
+    done
+    return 0
+}
+
+function make_active {
+    # Make sure a systemd unit is active
+    local unit=$1
+    log_setting "unit to activate" "$unit"
+
+    if ! sudo systemctl is-active --quiet "$unit"; then
+        sudo systemctl start "$unit" ||\
+            report $? "starting $unit"
+        if sudo systemctl is-failed --quiet "$unit"; then
+            sudo systemctl status --no-pager --lines=10 "$unit" ||\
+                report $? "get status of $unit"
+            cleanup "$SYSTEM_UNIT_FAILURE"
+        fi
+    fi
+    sudo systemctl status --no-pager --lines=0 "$unit" ||\
+        report $? "get status of $unit"
+    return 0
 }
 
 function run_package_maintenance {
@@ -423,6 +610,48 @@ function cleanup_remote_backup {
     return 0
 }
 
+function all_remote_backups {
+    # Run all desired remote backups to a
+    # a given destination. This does not
+    # include archive to object storage.
+
+    ##########################################################################
+    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
+    ##########################################################################
+
+    >&2 echo "${STAMP}: all_remote_backups"
+
+    local destination=$1
+
+    log_setting "destination for a $(hostnamectl hostname) backup set" \
+                "${destination}"
+
+    # Make sure we're excluding sensitive files
+    # from networked backups
+    for f in ${secret_folders[@]}; do
+        check_contains "${HOME}/.exclude_remote" "$f"
+    done
+
+    # Run remote backups over the wired connection only
+    if check_intfc "$MAIN_WIRED"; then
+        if ! check_intfc "$MAIN_WIRELESS"; then
+
+            run_remote_backup "${HOME}" "${destination}"
+
+            run_remote_backup '/mnt/data/archive' "${destination}"
+
+            if [ -n "${MONTH}" ]; then
+                if [ -d "/mnt/data/${MONTH}" ]; then
+                    run_remote_backup "/mnt/data/${MONTH}" "${destination}"
+                fi
+            fi
+
+            run_remote_backup '/mnt/data/wire' "${destination}"
+
+        fi
+    fi
+}
+
 function remove_sensitive_data {
     # This function has been carefully tested.
     # BE VERY CAREFUL WITH IT!
@@ -466,7 +695,7 @@ function remove_sensitive_data {
         return "$UNSAFE"
     fi
 
-    # Only apply this to gaol or subfolders of the data partition
+    # Only apply this subfolders of the gaol folder or of the data partition
     if [[ "$staging" != "${real_gaol}"* ]]; then
         if [[ "$staging" != "${real_data}"* ]]; then
             # Do not use the cleanup function here because it calls this function
@@ -515,72 +744,6 @@ function remove_sensitive_data {
         [ "$rc" -gt 0 ] && report "$rc" "removing secret files"
     done
 
-    return 0
-}
-
-function run_shared_preparation {
-    # Prepare some files for sharing via SHARED_STAGING
-
-    ##########################################################################
-    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
-    ##########################################################################
-
-    >&2 echo "${STAMP}: run_shared_preparation"
-
-    local src=$(realpath "$1")
-    local src_folder_name=$(basename $src)
-    local staging_area=$(realpath "${SHARED_STAGING}/${src_folder_name}")
-
-    log_setting "directory to backup" "$src"
-    log_setting "path to staging areas" "$staging_area"
-    check_exists "${src}/.include_shared"
-
-    # Clean out all folders from the staging area
-    for f in ${staging_area}/*; do
-        if [ -d "$f" ]; then
-            rm -rf $f
-        fi
-    done
-
-    # Synchroinuse to staging
-    while read f; do
-        echo $f
-        if [ -n "$f" ]; then
-            check_exists "${src}/${f}"
-            if [[ "$staging_area" != "${src}/${f}"* ]]; then
-                mkdir -p "${staging_area}/${f}"
-                rsync  -av \
-                       --links \
-                       --progress \
-                       --delete \
-                       "${src}/${f}/" \
-                       "${staging_area}/${f}/" ||\
-                    report "$?" "staging files via rsync"
-            else
-                >&2  echo "${STAMP}: $staging_area is in ${src}/${f}"
-                cleanup "$BAD_CONFIGURATION"
-            fi
-        fi
-    done < "${src}/.include_shared"
-
-    # Remove anything we do not share via cloud
-    remove_sensitive_data "${SHARED_STAGING}"
-
-    return 0
-}
-
-function cleanup_shared_preparation {
-    # Clean up after preparation of shared folders
-
-    ##########################################################################
-    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
-    ##########################################################################
-
-    killall rsync || report "$?" "kill the rsync processes"
-    slow rsync
-    remove_sensitive_data "${SHARED_STAGING}"
-    echo $(find "${SHARED_STAGING}" -type f | wc -l)  >\
-        "${SHARED_STAGING}/FILE_COUNT"
     return 0
 }
 
@@ -680,360 +843,70 @@ function cleanup_run_archive {
     return 0
 }
 
-function firewall_active {
-    # Check the firewall is up
-    not_empty "date stamp" "$STAMP"
+function run_shared_preparation {
+    # Prepare some files for sharing via SHARED_STAGING
 
-    >&2 echo "${STAMP}: firewall_active"
+    ##########################################################################
+    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
+    ##########################################################################
 
-    if sudo ufw status | grep -qs "Status: inactive"; then
-        sudo ufw enable || report $? "enable firewall"
-        if sudo ufw status | grep -qs "Status: inactive"; then
-            >&2 echo "${STAMP}: failed to activate firewall"
-            return "$SECURITY_FAILURE"
+    >&2 echo "${STAMP}: run_shared_preparation"
+
+    local src=$(realpath "$1")
+    local src_folder_name=$(basename $src)
+    local staging_area=$(realpath "${SHARED_STAGING}/${src_folder_name}")
+
+    log_setting "directory to backup" "$src"
+    log_setting "path to staging areas" "$staging_area"
+    check_exists "${src}/.include_shared"
+
+    # Clean out all folders from the staging area
+    for f in ${staging_area}/*; do
+        if [ -d "$f" ]; then
+            rm -rf $f
         fi
-    fi
-    sudo ufw status numbered || report $? "state firewall rules"
-    return 0
-}
-
-function ping_router {
-    # Make sure we can ping the local router
-
-    ##########################################################
-    # The number of seconds to wait is globally set as $WAIT #
-    ##########################################################
-
-    local intfc=$1
-    log_setting "ping router via interface" "$intfc"
-    rc=1
-    while  [ "$rc" -gt 0 ]; do
-        sleep ${WAIT}
-        ping -q -w 1 -c 1 `ip route |\
-                           grep default |\
-                           grep "$intfc" |\
-                           cut -d ' ' -f 3`
-        rc=$?
     done
-    if [ "$rc" -gt 0 ]; then
-        report "$rc" "ping to local router via $intfc" "no network so stop"
-    fi
-    return 0
-}
 
-function ping_check {
-    # Check ping via given interface to given url
-    local intfc=$1
-    local tgt=$2
-    not_empty "date stamp" "$STAMP"
-    log_setting "interface to check" "$intfc"
-    log_setting "url for ping" "$tgt"
-
-    # Max lost packet percentage
-    max_loss=50
-    packet_count=10
-    timeout=20
-    packets_lost=$(ping -W $timeout -c $packet_count -I $intfc $tgt |\
-                   grep % |\
-                   awk '{print $6}')
-    if ! [ -n "$packets_lost" ] || [ "$packets_lost" == "100%" ]; then
-        cleanup $NETWORK_ERROR
-        >&2 echo "${STAMP}: all packets lost from ${tgt} via ${intfc}"
-    else
-        if [ "${packets_lost}" == "0%" ]; then
-            return 0
-        else
-            # Packet loss rate between 0 and 100%
-            >&2 echo "${STAMP}: $packets_lost packets \
-                      lost from ${tgt} via ${intfc}"
-            real_loss=$(echo $packets_lost | sed 's/.$//')
-            if [[ ${real_loss} -gt ${max_loss} ]]; then
-                cleanup $NETWORK_ERROR
+    # Synchroinuse to staging
+    while read f; do
+        echo $f
+        if [ -n "$f" ]; then
+            check_exists "${src}/${f}"
+            if [[ "$staging_area" != "${src}/${f}"* ]]; then
+                mkdir -p "${staging_area}/${f}"
+                rsync  -av \
+                       --links \
+                       --progress \
+                       --delete \
+                       "${src}/${f}/" \
+                       "${staging_area}/${f}/" ||\
+                    report "$?" "staging files via rsync"
             else
-                return 0
+                >&2  echo "${STAMP}: $staging_area is in ${src}/${f}"
+                cleanup "$BAD_CONFIGURATION"
             fi
         fi
-    fi
-}
+    done < "${src}/.include_shared"
 
-function check_intfc {
-    # Check an interface is available
-    local intfc=$1
-    log_setting "interface to check" "$intfc"
-    intfc_list=$(ip link |\
-                 sed -n  '/^[0-9]*:/p' | grep UP | grep -v DOWN |\
-                 sed 's/^[0-9]*: \([0-9a-z]*\):.*/\1/')
-    for i in $intfc_list; do
-        if [ "$i" == "$intfc" ]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
-function check_single_tunnel {
-    # Make sure there is only a single tunnel set up
-
-    >&2 echo "${STAMP}: check_single_tunnel"
-
-    count=$(ip link |\
-            sed -n  '/^[0-9]*:/p' |\
-            sed 's/^[0-9]*: \([0-9a-z]*\):.*/\1/' |\
-            grep tun |\
-            wc -l)
-    if [ "$count" -eq 0 ]; then
-        >&2 echo "${STAMP}: tunnel not found"
-        return 1
-    else
-        if [ "$count" -gt 1 ]; then
-            >&2 echo "${STAMP}: too many tunnels found"
-            cleanup "$NETWORK_ERROR"
-        else
-            return 0
-        fi
-    fi
-}
-
-function start_tunnel {
-    # Start the OpenVPN encrypted tunnel
-
-    >&2 echo "${STAMP}: start_tunnel"
-
-    local ovpn=$1
-    log_setting "OpenVPN configuration to start" "$ovpn"
-    killall openvpn || report $? "stopping any tunnel"
-    slow openvpn
-    sudo openvpn --daemon --config "$ovpn"
-    while ! check_single_tunnel; do
-        sleep "$WAIT"
-    done
-    return 0
-}
-
-function network_check {
-
-    >&2 echo "${STAMP}: network_check"
-
-    local wired=$1
-    local wireless=$2
-    local tunnel=$3
-    local default_ovpn=$4
-
-    # Make source network connection is as expected
-    log_setting "usual wired interface" "$wired"
-    log_setting "usual wireless interface" "$wireless"
-    log_setting "tunnel interface" "$tunnel"
-    log_setting "default VPN configuration" "$default_ovpn"
-
-    firewall_active
-    if check_intfc "$wired"; then
-        sudo rfkill block wlan
-        ping_router "$wired"
-    else
-        sudo rfkill unblock wlan
-        ping_router "$wireless"
-    fi
-    if ! (check_intfc "$tunnel" &&\
-          ping_check "$tunnel" wiki.archlinux.org); then
-        start_tunnel $default_ovpn
-    fi
-    return 0
-}
-
-function system_check {
-    # Check services are running
-
-    ##################################################################
-    # System units to check are set globally in ${UNITS_TO_CHECK[@]} #
-    ##################################################################
-
-    >&2 echo "${STAMP}: system_check"
-
-    for svc in "${UNITS_TO_CHECK[@]}"; do
-        make_active "${svc}"
-    done
-    return 0
-}
-
-# Thanks to Stack Overflow for this
-# https://stackoverflow.com/questions/8808415/
-# using-bash-to-tell-whether-or-not-a-drive-with-a-given-uuid-is-mounted
-function is_mounted_by_uuid {
-    local input_path=$(readlink -f "$1")
-    local input_major_minor=$(stat -c '%T %t' "$input_path")
-
-    log_setting "path to disk" "$input_path"
-
-    cat /proc/mounts | cut -f-1 -d' ' | while read block_device; do
-        if [ -b "$block_device" ]; then
-            block_device_real=$(readlink -f "$block_device")
-            blkdev_major_minor=$(stat -c '%T %t' "$block_device_real")
-
-            if [ "$input_major_minor" == "$blkdev_major_minor" ]; then
-                return 255
-            fi
-        fi
-    done
-
-    if [ $? -eq 255 ]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-function size_distribution {
-    local folder=$1
-    local glob=$2
-
-    log_setting "folder for file size distribution" "$folder"
-    log_setting "glob for file size distribution" "$glob"
-
-    check_exists "$folder"
-
-    awk1='{size[int(log($5)/log(2))]++}'
-    awk2='{for (i in size) printf("%10d %3d\n", 2^i, size[i])}'
-
-    find "${folder}" -type f -name "${glob}" -print0 |\
-        xargs -0 ls -l |\
-        awk "${awk1}END${awk2}" |\
-        sort -n
+    # Remove anything we do not share via cloud
+    remove_sensitive_data "${SHARED_STAGING}"
 
     return 0
 }
 
-function sync_music_mp3 {
+function cleanup_shared_preparation {
+    # Clean up after preparation of shared folders
 
     ##########################################################################
     # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
 
-    >&2 echo "${STAMP}: sync_music_mp3"
-
-    local music=$1
-    local player_disk=$2
-    local player=$3
-    local clean=$4
-
-    log_setting "music folder" "$music"
-    log_setting "music player disk" "$player_disk"
-    log_setting "music player mounted folder" "$player"
-    log_setting "maximum number of subprocesses" "${MAX_SUBPROCESSES}"
-
-    check_exists "$music"
-    check_exists "$player_disk"
-
-    mp3_minimum_size=1048576
-
-    echo "***"
-    echo "m4a"
-    size_distribution "$music" "*.m4a"
-    echo "***"
-    echo "mp3 before conversion"
-    size_distribution "$music" "*.mp3"
-    echo "***"
-    echo "removing files"
-    find "${music}" -type f -name "*.mp3" \
-            -size -${mp3_minimum_size}c -exec rm {} \; ||\
-        report "$?" "removing suspiciously small mp3 files"
-    echo "***"
-    if [ "$clean" == "true" ]; then
-        echo "remove mp3 files converted from m4a"
-        find "${music}" -name "*.m4a" |\
-            parallel --jobs "${MAX_SUBPROCESSES}" \
-                rm -f {.}.mp3
-        echo "***"
-    else
-        echo "not cleaning"
-        echo "***"
-    fi
-    echo "converting from m4a"
-    find "${music}" -name "*.m4a" |\
-            parallel --jobs "${MAX_SUBPROCESSES}" \
-                nice -n 19 ffmpeg  -v 5 -n -i {} \
-                        -acodec libmp3lame \
-                        -ac 2 \
-                        -ab 320k \
-                        {.}.mp3
-    echo "***"
-    echo "mp3 after conversion"
-    size_distribution "$music" "*.mp3"
-    echo "***"
-
-    check_exists "$player"
-
-    if is_mounted_by_uuid "$player_disk"; then
-        echo "check for player"
-        if [ -e "$player" ]; then
-            echo "looping over artists"
-            while read artist; do
-                echo "$artist"
-                check_exists "${music}/${artist}"
-                mkdir -p "${player}/${artist}"
-                rsync   -av --no-perms --no-owner --no-group \
-                        --prune-empty-dirs \
-                        --links \
-                        --progress \
-                        --delete \
-                        --delete-excluded \
-                        --include=*/"" \
-                        --include="*.mp3" \
-                        --exclude="*" \
-                        "${music}/${artist}/" \
-                        "${player}/${artist}/" ||\
-                    report "$?" "sync music to player"
-                echo "***"
-            done < "${music}/.include_player"
-        else
-            return "$MISSING_FOLDER"
-        fi
-    else
-        return "$MISSING_DISK"
-    fi
-
+    killall rsync || report "$?" "kill the rsync processes"
+    slow rsync
+    remove_sensitive_data "${SHARED_STAGING}"
+    echo $(find "${SHARED_STAGING}" -type f | wc -l)  >\
+        "${SHARED_STAGING}/FILE_COUNT"
     return 0
-}
-
-function all_remote_backups {
-    # Run all desired remote backups to a
-    # a given destination. This does not
-    # include archive to object storage.
-
-    ##########################################################################
-    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
-    ##########################################################################
-
-    >&2 echo "${STAMP}: all_remote_backups"
-
-    local destination=$1
-
-    log_setting "destination for a $(hostnamectl hostname) backup set" \
-                "${destination}"
-
-    # Make sure we're excluding sensitive files
-    # from networked backups
-    for f in ${secret_folders[@]}; do
-        check_contains "${HOME}/.exclude_remote" "$f"
-    done
-
-    # Run remote backups over the wired connection only
-    if check_intfc "$MAIN_WIRED"; then
-        if ! check_intfc "$MAIN_WIRELESS"; then
-
-            run_remote_backup "${HOME}" "${destination}"
-
-            run_remote_backup '/mnt/data/archive' "${destination}"
-
-            if [ -n "${MONTH}" ]; then
-                if [ -d "/mnt/data/${MONTH}" ]; then
-                    run_remote_backup "/mnt/data/${MONTH}" "${destination}"
-                fi
-            fi
-
-            run_remote_backup '/mnt/data/wire' "${destination}"
-
-        fi
-    fi
 }
 
 function handle_signal {
@@ -1099,11 +972,6 @@ run_shared_preparation "${HOME}"
 
 # Run at least one remote backup
 # all_remote_backups "${REMOTE_BACKUP}"
-
-# Only run if music player is available and if so mount first
-# sync_music_mp3  "${HOME}/cloud/music" \
-#                 "${MUSIC_PLAYER}" \
-#                 "${HOME}/mnt/lucy/Music files"
 
 # Cleanup and exit with code 0
 cleanup 0
