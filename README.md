@@ -5,6 +5,70 @@ tasks on a Linux workstation. They are particular
 to my set up and I do not know if they are useful for
 others.
 
+## Tasks performed
+
+The following task descriptions are based on
+the default configuration.
+
+1.  *Network check:*
+
+    Expects that a VPN should be running, and
+    will try to start one if needed.
+
+    -   `firewall_active`
+
+    -   `ping_router`
+
+    -   `ping_check`
+
+    -   `check_intfc`
+
+    -   `check_single_tunnel`
+
+    -   `start_tunnel`
+
+2.  *System check:* `system_check`, `make_active`
+
+    Usually `syncthing` and `sshd`.
+    Exit cleanly if these units fail.
+
+3.  *Package maintenance and system update:* `_package_maintenance`
+
+    Several update and maintenance tasks mostly
+    taken from the Arch Wiki.
+
+4.  *Local backup:* `_local_backup`
+
+    Backup everything not in `~/.exclude_local` to
+    a key drive or similar. Controlled using
+    global settings.
+
+5.  *Archive ready for S3:* `_archive`
+
+    If the encrypted folder is mounted clear,
+    make sure there is no harm in sending it
+    to S3. If the test passes, unmount
+    and clone to S3. This is done for a general
+    archive as well as monthly sets.
+    File lists are saved.
+
+6.  *Prepare shared folder:* `_shared_preparation`
+
+    Setup a folder full of usefully shared files,
+    with anything sensitive automatically removed.
+
+
+### Tasks disabled
+
+-   *Remote backup:* `_remote_backup`, `all_remote_backups`
+
+    Send everything not in `~/.exclude_remote`
+    to a remote destination after making sure
+    secret folders are in the excludes.
+    Usual remote backup destinations are set
+    globally.
+
+
 ## Variables that control operation
 
 ### Environment variables
