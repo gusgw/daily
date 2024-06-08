@@ -956,19 +956,6 @@ if [ -n "${MONTH}" ]; then
     fi
 fi
 
-# Run archive for any monthly offloads remaining
-for m in {9..10}; do
-    mth="2023$(printf '%02d' $m)"
-    log_setting "past month" "${mth}"
-    if [ -n "${mth}" ]; then
-        if [ -d "/mnt/data/${mth}" ]; then
-            run_archive "/mnt/data/${mth}/clear" \
-                        "/mnt/data/${mth}/offload" \
-                        "clovis-mnt-data-${mth}-offload-gda"
-        fi
-    fi
-done
-
 # Set up folders for sharing via commercial cloud
 run_shared_preparation "${HOME}"
 
