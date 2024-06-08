@@ -217,7 +217,7 @@ function ping_router {
     ##########################################################
 
     local pr_intfc=$1
-    log_setting "ping router via interface" "$pr_intfc"
+    log_setting "interface for router ping" "$pr_intfc"
     local pr_rc=1
     local pr_count=0
     while  [ "$pr_rc" -gt 0 ] && [ "$pr_count" -lt "$ATTEMPTS" ]; do
