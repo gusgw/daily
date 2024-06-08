@@ -943,11 +943,13 @@ run_package_maintenance
 run_local_backup
 
 # Unmount and send encrypted archive via rclone
+# to standard S3 storage
 run_archive '/mnt/data/clear' \
             '/mnt/data/archive' \
             'clovis-mnt-data-archive-std'
 
-# If available prepare to offload files
+# If available prepare to offload files to
+# glacier deep archive storage
 if [ -n "${MONTH}" ]; then
     if [ -d "/mnt/data/${MONTH}" ]; then
         run_archive "/mnt/data/${MONTH}/clear" \
