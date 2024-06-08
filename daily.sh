@@ -28,6 +28,10 @@ SIMULTANEOUS_TRANSFERS=32
 # repeatedly
 WAIT=5.0
 
+# Number of attempts for checks
+# that repeat on fail
+ATTEMPTS=10
+
 # Make sure these units are active
 UNITS_TO_CHECK=( "syncthing@${USER}.service" 'sshd.service' )
 
@@ -212,19 +216,21 @@ function ping_router {
     # The number of seconds to wait is globally set as $WAIT #
     ##########################################################
 
-    local intfc=$1
-    log_setting "ping router via interface" "$intfc"
-    rc=1
-    while  [ "$rc" -gt 0 ]; do
+    local pr_intfc=$1
+    log_setting "ping router via interface" "$pr_intfc"
+    local pr_rc=1
+    local pr_count=0
+    while  [ "$pr_rc" -gt 0 ] && [ "$pr_count" -lt "$ATTEMPTS" ]; do
         sleep ${WAIT}
         ping -q -w 1 -c 1 `ip route |\
                            grep default |\
-                           grep "$intfc" |\
+                           grep "$pr_intfc" |\
                            cut -d ' ' -f 3`
-        rc=$?
+        pr_rc=$?
+        pr_count=$((pr_count+1))
     done
-    if [ "$rc" -gt 0 ]; then
-        report "$rc" "ping to local router via $intfc" "no network so stop"
+    if [ "$pr_rc" -gt 0 ]; then
+        report "$pr_rc" "ping to local router via $pr_intfc" "no network so stop"
     fi
     return 0
 }
