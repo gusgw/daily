@@ -62,10 +62,10 @@ function not_empty {
     # Generally this is used to check that parameters
     # have been provided so the return code when the
     # expression is empty is ${MISSING_INPUT}.
-    local description=$1
-    local check=$2
-    if [ -z "$check" ]; then
-        >&2 echo "${STAMP}: cannot run without ${description}"
+    local ne_description=$1
+    local ne_check=$2
+    if [ -z "$ne_check" ]; then
+        >&2 echo "${STAMP}: cannot run without ${ne_description}"
         cleanup "${MISSING_INPUT}"
     fi
     return 0
@@ -74,21 +74,21 @@ function not_empty {
 function log_setting {
     # Make sure a setting is provided
     # and report it
-    local description=$1
-    local setting=$2
+    local ls_description=$1
+    local ls_setting=$2
     not_empty "date stamp" "${STAMP}"
-    not_empty "$description" "$setting"
-    >&2 echo "${STAMP}: ${description} is ${setting}"
+    not_empty "$ls_description" "$ls_setting"
+    >&2 echo "${STAMP}: ${ls_description} is ${ls_setting}"
     return 0
 }
 
 function check_exists {
     # Make sure a file or folder or link exists
     # then cleanup and quit if not
-    local file_name=$1
-    log_setting "file or directory name that must exist" "$file_name"
-    if ! [ -e "$file_name" ]; then
-        >&2 echo "${STAMP}: cannot find $file_name"
+    local ce_file_name=$1
+    log_setting "file or directory name that must exist" "$ce_file_name"
+    if ! [ -e "$ce_file_name" ]; then
+        >&2 echo "${STAMP}: cannot find $ce_file_name"
         cleanup "$MISSING_FILE"
     fi
     return 0
@@ -97,18 +97,18 @@ function check_exists {
 function check_contains {
     # Make sure a file exists and contains
     # the given string.
-    local file_name=$1
-    local string=$2
-    log_setting "file name to check" "$file_name"
-    log_setting "string to check for" "$string"
+    local cc_file_name=$1
+    local cc_string=$2
+    log_setting "file name to check" "$cc_file_name"
+    log_setting "string to check for" "$cc_string"
     not_empty "date stamp" "$STAMP"
-    if [ -e "$file_name" ]; then
-        if ! grep -qs "${string}" "${file_name}"; then
-            >&2 echo "${STAMP}: ${file_name} does not contain ${string}"
+    if [ -e "$cc_file_name" ]; then
+        if ! grep -qs "${cc_string}" "${cc_file_name}"; then
+            >&2 echo "${STAMP}: ${cc_file_name} does not contain ${cc_string}"
             cleanup "$BAD_CONFIGURATION"
         fi
     else
-        >&2 echo "${STAMP}: cannot find ${file_name}"
+        >&2 echo "${STAMP}: cannot find ${cc_file_name}"
         cleanup "$MISSING_FILE"
     fi
     return 0
@@ -118,9 +118,9 @@ function path_as_name {
     # Convert a path to a string that
     # can be used as a name. This is sometimes
     # useful for naming archives and so on.
-    local path=$1
-    not_empty "path to convert to a name" "$path"
-    echo "$path" |\
+    local pan_path=$1
+    not_empty "path to convert to a name" "$pan_path"
+    echo "$pan_path" |\
         sed 's:^/::' |\
         sed 's:/:-:g' |\
         sed 's/[[:space:]]/_/g'
@@ -132,17 +132,17 @@ function report {
     # code, and if an exit
     # message is provided as a third argument
     # also exit cleanly
-    local rc=$1
-    local description=$2
-    local exit_message=$3
-    >&2 echo "${STAMP}: ${description} exited with code $rc"
-    if [ -z "$exit_message" ]; then
+    local r_rc=$1
+    local r_description=$2
+    local r_exit_message=$3
+    >&2 echo "${STAMP}: ${r_description} exited with code $r_rc"
+    if [ -z "$r_exit_message" ]; then
         >&2 echo "${STAMP}: continuing . . ."
     else
-        >&2 echo "${STAMP}: $exit_message"
-        cleanup $rc
+        >&2 echo "${STAMP}: $r_exit_message"
+        cleanup $r_rc
     fi
-    return $rc
+    return $r_rc
 }
 
 function slow {
@@ -153,11 +153,11 @@ function slow {
     # The number of seconds to wait is globally set as $WAIT #
     ##########################################################
 
-    local pname=$1
-    log_setting "program name to wait for" "$pname"
-    for pid in $(pgrep $pname); do
+    local s_pname=$1
+    log_setting "program name to wait for" "$s_pname"
+    for pid in $(pgrep $s_pname); do
         while kill -0 "$pid" 2> /dev/null; do
-            >&2 echo "${STAMP}: ${pname} ${pid} is still running"
+            >&2 echo "${STAMP}: ${s_pname} ${pid} is still running"
             sleep ${WAIT}
         done
     done
@@ -176,16 +176,16 @@ function cleanup {
     # handle trapped signals             #
     ######################################
 
-    local rc=$1
+    local c_rc=$1
     >&2 echo "***"
-    >&2 echo "${STAMP}: exiting cleanly with code ${rc}. . ."
+    >&2 echo "${STAMP}: exiting cleanly with code ${c_rc}. . ."
     cleanup_package_maintenance
     cleanup_run_archive
     cleanup_remote_backup
     cleanup_local_backup
     cleanup_shared_preparation
-    >&2 echo "${STAMP}: . . . all done with code ${rc}"
-    exit $rc
+    >&2 echo "${STAMP}: . . . all done with code ${c_rc}"
+    exit $c_rc
 }
 
 function firewall_active {
@@ -231,31 +231,31 @@ function ping_router {
 
 function ping_check {
     # Check ping via given interface to given url
-    local intfc=$1
-    local tgt=$2
+    local pc_intfc=$1
+    local pc_tgt=$2
     not_empty "date stamp" "$STAMP"
-    log_setting "interface to check" "$intfc"
-    log_setting "url for ping" "$tgt"
+    log_setting "interface to check" "$pc_intfc"
+    log_setting "url for ping" "$pc_tgt"
 
     # Max lost packet percentage
-    max_loss=50
-    packet_count=10
-    timeout=20
-    packets_lost=$(ping -W $timeout -c $packet_count -I $intfc $tgt |\
-                   grep % |\
-                   awk '{print $6}')
-    if ! [ -n "$packets_lost" ] || [ "$packets_lost" == "100%" ]; then
+    local pc_max_loss=50
+    local pc_packet_count=10
+    local pc_timeout=20
+    local pc_packets_lost=$(ping -W $pc_timeout -c $pc_packet_count -I $pc_intfc $pc_tgt |\
+                            grep % |\
+                            awk '{print $6}')
+    if ! [ -n "$pc_packets_lost" ] || [ "$pc_packets_lost" == "100%" ]; then
         cleanup $NETWORK_ERROR
-        >&2 echo "${STAMP}: all packets lost from ${tgt} via ${intfc}"
+        >&2 echo "${STAMP}: all packets lost from ${pc_tgt} via ${pc_intfc}"
     else
-        if [ "${packets_lost}" == "0%" ]; then
+        if [ "${pc_packets_lost}" == "0%" ]; then
             return 0
         else
             # Packet loss rate between 0 and 100%
-            >&2 echo "${STAMP}: $packets_lost packets \
-                      lost from ${tgt} via ${intfc}"
-            real_loss=$(echo $packets_lost | sed 's/.$//')
-            if [[ ${real_loss} -gt ${max_loss} ]]; then
+            >&2 echo "${STAMP}: $pc_packets_lost packets \
+                      lost from ${pc_tgt} via ${pc_intfc}"
+            local pc_real_loss=$(echo $pc_packets_lost | sed 's/.$//')
+            if [[ ${pc_real_loss} -gt ${pc_max_loss} ]]; then
                 cleanup $NETWORK_ERROR
             else
                 return 0
@@ -266,13 +266,13 @@ function ping_check {
 
 function check_intfc {
     # Check an interface is available
-    local intfc=$1
-    log_setting "interface to check" "$intfc"
-    intfc_list=$(ip link |\
-                 sed -n  '/^[0-9]*:/p' | grep UP | grep -v DOWN |\
-                 sed 's/^[0-9]*: \([0-9a-z]*\):.*/\1/')
-    for i in $intfc_list; do
-        if [ "$i" == "$intfc" ]; then
+    local ci_intfc=$1
+    log_setting "interface to check" "$ci_intfc"
+    local ci_intfc_list=$(ip link |\
+                          sed -n  '/^[0-9]*:/p' | grep UP | grep -v DOWN |\
+                          sed 's/^[0-9]*: \([0-9a-z]*\):.*/\1/')
+    for i in $ci_intfc_list; do
+        if [ "$i" == "$ci_intfc" ]; then
             return 0
         fi
     done
@@ -284,16 +284,16 @@ function check_single_tunnel {
 
     >&2 echo "${STAMP}: check_single_tunnel"
 
-    count=$(ip link |\
-            sed -n  '/^[0-9]*:/p' |\
-            sed 's/^[0-9]*: \([0-9a-z]*\):.*/\1/' |\
-            grep tun |\
-            wc -l)
-    if [ "$count" -eq 0 ]; then
+    local cst_count=$(ip link |\
+                      sed -n  '/^[0-9]*:/p' |\
+                      sed 's/^[0-9]*: \([0-9a-z]*\):.*/\1/' |\
+                      grep tun |\
+                      wc -l)
+    if [ "$cst_count" -eq 0 ]; then
         >&2 echo "${STAMP}: tunnel not found"
         return 1
     else
-        if [ "$count" -gt 1 ]; then
+        if [ "$cst_count" -gt 1 ]; then
             >&2 echo "${STAMP}: too many tunnels found"
             cleanup "$NETWORK_ERROR"
         else
@@ -307,11 +307,11 @@ function start_tunnel {
 
     >&2 echo "${STAMP}: start_tunnel"
 
-    local ovpn=$1
-    log_setting "OpenVPN configuration to start" "$ovpn"
+    local st_ovpn=$1
+    log_setting "OpenVPN configuration to start" "$st_ovpn"
     killall openvpn || report $? "stopping any tunnel"
     slow openvpn
-    sudo openvpn --daemon --config "$ovpn"
+    sudo openvpn --daemon --config "$st_ovpn"
     while ! check_single_tunnel; do
         sleep "$WAIT"
     done
@@ -322,28 +322,28 @@ function network_check {
 
     >&2 echo "${STAMP}: network_check"
 
-    local wired=$1
-    local wireless=$2
-    local tunnel=$3
-    local default_ovpn=$4
+    local nc_wired=$1
+    local nc_wireless=$2
+    local nc_tunnel=$3
+    local nc_default_ovpn=$4
 
     # Make source network connection is as expected
-    log_setting "usual wired interface" "$wired"
-    log_setting "usual wireless interface" "$wireless"
-    log_setting "tunnel interface" "$tunnel"
-    log_setting "default VPN configuration" "$default_ovpn"
+    log_setting "usual wired interface" "$nc_wired"
+    log_setting "usual wireless interface" "$nc_wireless"
+    log_setting "tunnel interface" "$nc_tunnel"
+    log_setting "default VPN configuration" "$nc_default_ovpn"
 
     firewall_active
-    if check_intfc "$wired"; then
+    if check_intfc "$nc_wired"; then
         sudo rfkill block wlan
-        ping_router "$wired"
+        ping_router "$nc_wired"
     else
         sudo rfkill unblock wlan
-        ping_router "$wireless"
+        ping_router "$nc_wireless"
     fi
-    if ! (check_intfc "$tunnel" &&\
-          ping_check "$tunnel" wiki.archlinux.org); then
-        start_tunnel $default_ovpn
+    if ! (check_intfc "$nc_tunnel" &&\
+          ping_check "$nc_tunnel" wiki.archlinux.org); then
+        start_tunnel $nc_default_ovpn
     fi
     return 0
 }
@@ -365,20 +365,20 @@ function system_check {
 
 function make_active {
     # Make sure a systemd unit is active
-    local unit=$1
-    log_setting "unit to activate" "$unit"
+    local ma_unit=$1
+    log_setting "unit to activate" "$ma_unit"
 
-    if ! sudo systemctl is-active --quiet "$unit"; then
-        sudo systemctl start "$unit" ||\
-            report $? "starting $unit"
-        if sudo systemctl is-failed --quiet "$unit"; then
-            sudo systemctl status --no-pager --lines=10 "$unit" ||\
-                report $? "get status of $unit"
+    if ! sudo systemctl is-active --quiet "$ma_unit"; then
+        sudo systemctl start "$ma_unit" ||\
+            report $? "starting $ma_unit"
+        if sudo systemctl is-failed --quiet "$ma_unit"; then
+            sudo systemctl status --no-pager --lines=10 "$ma_unit" ||\
+                report $? "get status of $ma_unit"
             cleanup "$SYSTEM_UNIT_FAILURE"
         fi
     fi
-    sudo systemctl status --no-pager --lines=0 "$unit" ||\
-        report $? "get status of $unit"
+    sudo systemctl status --no-pager --lines=0 "$ma_unit" ||\
+        report $? "get status of $ma_unit"
     return 0
 }
 
@@ -674,6 +674,8 @@ function remove_sensitive_data {
     local real_data="/mnt/data"
     local real_gaol="${real_home}/gaol"
 
+    local lrc=0
+
     log_setting "path to remove sensitive data" "$staging"
     log_setting "path to home folder" "$real_home"
 
@@ -712,36 +714,36 @@ function remove_sensitive_data {
         log_setting "secret folder to remove" "$f"
 
         find "${staging}/" -type l -name "$f" -exec rm -f {} \;
-        rc=$?
-        [ "$rc" -gt 0 ] && report "$rc" "removing secret folders (links)"
+        lrc=$?
+        [ "$lrc" -gt 0 ] && report "$lrc" "removing secret folders (links)"
 
         find "${staging}/" -type d -name "$f" -exec rm -rf {} \;
-        rc=$?
-        [ "$rc" -gt 0 ] && report "$rc" "removing secret folders recursively"
+        lrc=$?
+        [ "$lrc" -gt 0 ] && report "$lrc" "removing secret folders recursively"
 
     done
     for f in ${SENSITIVE_FOLDERS[@]}; do
         log_setting "sensitive folder to remove" "$f"
 
         find "${staging}/" -type l -name "$f"  -exec rm -f {} \;
-        rc=$?
-        [ "$rc" -gt 0 ] && report "$rc" "removing sensitive folders (links)"
+        lrc=$?
+        [ "$lrc" -gt 0 ] && report "$lrc" "removing sensitive folders (links)"
 
         find "${staging}/" -type d -name "$f"  -exec rm -rf {} \;
-        rc=$?
-        [ "$rc" -gt 0 ] && report "$rc" "removing sensitive folders recursively"
+        lrc=$?
+        [ "$lrc" -gt 0 ] && report "$lrc" "removing sensitive folders recursively"
 
     done
     for f in ${SECRET_FILES[@]}; do
         log_setting "secret file to remove" "$f"
 
         find "${staging}/" -type l -name "$f"  -exec rm -f {} \;
-        rc=$?
-        [ "$rc" -gt 0 ] && report "$rc" "removing secret files (links)"
+        lrc=$?
+        [ "$lrc" -gt 0 ] && report "$lrc" "removing secret files (links)"
 
         find "${staging}/" -type f -name "$f"  -exec rm -f {} \;
-        rc=$?
-        [ "$rc" -gt 0 ] && report "$rc" "removing secret files"
+        lrc=$?
+        [ "$lrc" -gt 0 ] && report "$lrc" "removing secret files"
     done
 
     return 0
