@@ -492,11 +492,16 @@ function run_local_backup {
 
     local home_folder_name=$(basename $HOME)
     local backup_destination="/mnt/${BACKUP_NAME}/${home_folder_name}"
+    local extra_backup_destination="/mnt/${EXTRA_BACKUP_NAME}/${home_folder_name}"
+
     not_empty "date stamp" "$STAMP"
     log_setting "name of the file with encryption key for local backup" \
                 "$KEY_FILE"
     log_setting "device path for local encrypted backup" "$BACKUP_DISK"
     log_setting "name of the backup" "$BACKUP_NAME"
+    log_setting "device path for extra local encrypted backup" "$EXTRA_BACKUP_DISK"
+    log_setting "name of extra backup" "$EXTRA_BACKUP_NAME"
+
     check_exists "${HOME}/.exclude_local"
 
     if [ -e "$BACKUP_DISK" ]; then
@@ -523,6 +528,32 @@ function run_local_backup {
         fi
     else
         >&2 echo "${STAMP}:  local backup device not found"
+    fi
+
+    if [ -e "$EXTRA_BACKUP_DISK" ]; then
+        sudo cryptsetup open --key-file="$KEY_FILE"\
+                             "$EXTRA_BACKUP_DISK" \
+                             "$EXTRA_BACKUP_NAME" ||\
+            report $? "unlock extra backup disk"
+        sudo fsck -a "/dev/mapper/$EXTRA_BACKUP_NAME" ||\
+            report $? "running file system check on /dev/mapper/$EXTRA_BACKUP_NAME"
+        sudo mount "/dev/mapper/$EXTRA_BACKUP_NAME" "/mnt/$EXTRA_BACKUP_NAME" ||\
+            report $? "mount extra backup disk"
+        if [ -d "$extra_backup_destination" ]; then
+            sudo rsync  -av \
+                        --links \
+                        --progress \
+                        --delete \
+                        --delete-excluded \
+                        --exclude-from="${HOME}/.exclude_local" \
+                        "${HOME}/" \
+                        "${extra_backup_destination}/" ||\
+                    report $? "extra local backup via rsync"
+        else
+            >&2 echo "${STAMP}: extra local backup destination not found"
+        fi
+    else
+        >&2 echo "${STAMP}: extra local backup device not found"
     fi
 
     return 0
@@ -557,6 +588,18 @@ function cleanup_local_backup {
     if sudo cryptsetup status ${BACKUP_NAME} 1> /dev/null; then
         sudo cryptsetup close ${BACKUP_NAME} ||\
             report $? "locking backup drive"
+    fi
+
+    # If the local backup is mounted, unmount
+    if grep -qs "/mnt/${EXTRA_BACKUP_NAME}" /proc/mounts; then
+        sudo umount /dev/mapper/${EXTRA_BACKUP_NAME} ||\
+            report $? "unmounting extra backup"
+    fi
+
+    # Do not leave the encrypted backup unlocked
+    if sudo cryptsetup status ${EXTRA_BACKUP_NAME} 1> /dev/null; then
+        sudo cryptsetup close ${EXTRA_BACKUP_NAME} ||\
+            report $? "locking extra backup drive"
     fi
 
     return 0
@@ -961,6 +1004,16 @@ if [ -n "${MONTH}" ]; then
         run_archive "/mnt/data/${MONTH}/clear" \
                     "/mnt/data/${MONTH}/offload" \
                     "clovis-mnt-data-${MONTH}-offload-gda"
+    fi
+fi
+
+# Offload previous month if necessary
+OLDMONTH=""
+if [ -n "${OLDMONTH}" ]; then
+    if [ -d "/mnt/data/${OLDMONTH}" ]; then
+        run_archive "/mnt/data/${OLDMONTH}/clear" \
+                    "/mnt/data/${OLDMONTH}/offload" \
+                    "clovis-mnt-data-${OLDMONTH}-offload-gda"
     fi
 fi
 
