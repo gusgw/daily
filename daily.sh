@@ -176,6 +176,12 @@ function print_rule {
     echo
 }
 
+function print_error_rule {
+    >&2 echo
+    >&2 echo "$RULE"
+    >&2 echo
+}
+
 #################################
 # Functions that run daily tasks
 
@@ -190,7 +196,7 @@ function cleanup {
     ######################################
 
     local c_rc=$1
-    >&2 echo "***"
+    print_error_rule
     >&2 echo "${STAMP}: exiting cleanly with code ${c_rc}. . ."
     cleanup_package_maintenance
     cleanup_run_archive
