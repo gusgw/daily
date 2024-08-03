@@ -170,23 +170,6 @@ function slow {
 #################################
 # Functions that run daily tasks
 
-function magpie {
-    not_empty "mail server" "$MAIL_SERVER"
-    not_empty "conda script to source" "$CONDASH"
-    server=$(pgrep "${MAIL_SERVER}")
-    rc=$?
-    if [ "$rc" -eq 0 ]; then
-        eval "$(conda shell.bash hook)"
-        source "$CONDASH"
-        conda activate magpie
-        ${HOME}/magpie sync
-        conda deactivate
-    else
-        report "$rc" "setup conda for magpie"
-    fi
-    return $rc
-}
-
 function cleanup {
 
     ######################################
@@ -207,6 +190,23 @@ function cleanup {
     cleanup_shared_preparation
     >&2 echo "${STAMP}: . . . all done with code ${c_rc}"
     exit $c_rc
+}
+
+function magpie {
+    not_empty "mail server" "$MAIL_SERVER"
+    not_empty "conda script to source" "$CONDASH"
+    server=$(pgrep "${MAIL_SERVER}")
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        eval "$(conda shell.bash hook)"
+        source "$CONDASH"
+        conda activate magpie
+        ${HOME}/magpie sync
+        conda deactivate
+    else
+        report "$rc" "setup conda for magpie"
+    fi
+    return $rc
 }
 
 function firewall_active {
