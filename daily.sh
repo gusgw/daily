@@ -43,6 +43,9 @@ SECRET_FILES=( "*.asc" "*.key" "*.pem" "id_rsa*" "id_dsa*" "id_ed25519*" )
 # Also keep these from being sent to cloud storage
 SENSITIVE_FOLDERS=( '.git' '.stfolder' '.stversions' '.local' )
 
+# Symbols to separate output sections
+RULE="***"
+
 #################################
 # Utility functions
 
@@ -165,6 +168,12 @@ function slow {
             sleep ${WAIT}
         done
     done
+}
+
+function print_rule {
+    echo
+    echo "$RULE"
+    echo
 }
 
 #################################
@@ -380,8 +389,10 @@ function system_check {
 
     >&2 echo "${STAMP}: system_check"
 
+    print_rule
     for svc in "${UNITS_TO_CHECK[@]}"; do
         make_active "${svc}"
+        print_rule
     done
     return 0
 }
