@@ -216,7 +216,7 @@ function magpie {
         eval "$(conda shell.bash hook)"
         source "$CONDASH"
         conda activate magpie
-        ${HOME}/magpie sync
+        ${HOME}/magpie sync 2>&1
         conda deactivate
     else
         report "$rc" "setup conda for magpie"
