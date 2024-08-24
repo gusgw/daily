@@ -33,7 +33,7 @@ WAIT=5.0
 ATTEMPTS=10
 
 # Make sure these units are active
-UNITS_TO_CHECK=( "syncthing@${USER}.service" 'sshd.service' 'updatedb.timer' )
+UNITS_TO_CHECK=( "syncthing@${USER}.service" 'sshd.service' 'apparmor.service' 'updatedb.timer' )
 
 # Automatically ensure that these folders and files
 # are not copied to remote backups etc.
