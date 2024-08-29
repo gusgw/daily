@@ -1011,54 +1011,54 @@ set_stamp
 set_month
 
 # Check the network
-network_check   "$MAIN_WIRED" \
-                "$MAIN_WIRELESS" \
-                "$MAIN_TUNNEL" \
-                "$DEFAULT_VPN"
+# network_check   "$MAIN_WIRED" \
+#                 "$MAIN_WIRELESS" \
+#                 "$MAIN_TUNNEL" \
+#                 "$DEFAULT_VPN"
 
 # System checks
-system_check
+# system_check
 
 # Run package related maintenance tasks
-run_package_maintenance
+# run_package_maintenance
 
 # Run organiser
-magpie
+# magpie
 
 # Run the backups
-run_local_backup
+# run_local_backup
 
 # Unmount and send encrypted archive via rclone
 # to standard S3 storage
-run_archive '/mnt/data/clear' \
-            '/mnt/data/archive' \
-            'clovis-mnt-data-archive-std'
+# run_archive '/mnt/data/clear' \
+#             '/mnt/data/archive' \
+#             'clovis-mnt-data-archive-std'
 
 # If available prepare to offload files to
 # glacier deep archive storage
-if [ -n "${MONTH}" ]; then
-    if [ -d "/mnt/data/${MONTH}" ]; then
-        run_archive "/mnt/data/${MONTH}/clear" \
-                    "/mnt/data/${MONTH}/offload" \
-                    "clovis-mnt-data-${MONTH}-offload-gda"
-    fi
-fi
+# if [ -n "${MONTH}" ]; then
+#     if [ -d "/mnt/data/${MONTH}" ]; then
+#         run_archive "/mnt/data/${MONTH}/clear" \
+#                     "/mnt/data/${MONTH}/offload" \
+#                     "clovis-mnt-data-${MONTH}-offload-gda"
+#     fi
+# fi
 
 # Offload previous month if necessary
-OLDMONTH=""
-if [ -n "${OLDMONTH}" ]; then
-    if [ -d "/mnt/data/${OLDMONTH}" ]; then
-        run_archive "/mnt/data/${OLDMONTH}/clear" \
-                    "/mnt/data/${OLDMONTH}/offload" \
-                    "clovis-mnt-data-${OLDMONTH}-offload-gda"
-    fi
-fi
+# OLDMONTH=""
+# if [ -n "${OLDMONTH}" ]; then
+#     if [ -d "/mnt/data/${OLDMONTH}" ]; then
+#         run_archive "/mnt/data/${OLDMONTH}/clear" \
+#                     "/mnt/data/${OLDMONTH}/offload" \
+#                     "clovis-mnt-data-${OLDMONTH}-offload-gda"
+#     fi
+# fi
 
 # Set up folders for sharing via commercial cloud
-run_shared_preparation "${HOME}"
+# run_shared_preparation "${HOME}"
 
 # Run at least one remote backup
-# all_remote_backups "${REMOTE_BACKUP}"
+## all_remote_backups "${REMOTE_BACKUP}"
 
 # Cleanup and exit with code 0
-cleanup 0
+# cleanup 0
