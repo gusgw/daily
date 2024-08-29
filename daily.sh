@@ -5,170 +5,11 @@
 # Set return codes as used in general
 . return_codes.sh
 
-echo "TRAPPED_SIGNAL = "$TRAPPED_SIGNAL
+# Settings for this script
+. settings.sh
 
-# Limits for parallel work
-MAX_SUBPROCESSES=16
-SIMULTANEOUS_TRANSFERS=32
-
-# Set a wait time in seconds
-# for any task that is attempted
-# repeatedly
-WAIT=5.0
-
-# Number of attempts for checks
-# that repeat on fail
-ATTEMPTS=10
-
-# Make sure these units are active
-UNITS_TO_CHECK=( "syncthing@${USER}.service" 'sshd.service' 'apparmor.service' 'updatedb.timer' )
-
-# Automatically ensure that these folders and files
-# are not copied to remote backups etc.
-SECRET_FOLDERS=( '.ssh' '.gnupg' '.cert' '.pki' '.password-store' )
-SECRET_FILES=( "*.asc" "*.key" "*.pem" "id_rsa*" "id_dsa*" "id_ed25519*" )
-
-# Also keep these from being sent to cloud storage
-SENSITIVE_FOLDERS=( '.git' '.stfolder' '.stversions' '.local' )
-
-# Symbols to separate output sections
-RULE="***"
-
-#################################
-# Utility functions
-
-function set_stamp {
-    # Store a stamp used to label files
-    # and messages created in this script.
-    export STAMP="$(date '+%Y%m%d'-$(hostnamectl hostname))"
-    return 0
-}
-
-function set_month {
-    # Set a global variable containing the year and month
-    # for use in naming folders to offload
-    export MONTH="$(date '+%Y%m')"
-    return 0
-}
-
-function not_empty {
-    # Ensure that an expression is not empty
-    # then cleanup and quit if it is.
-    # Generally this is used to check that parameters
-    # have been provided so the return code when the
-    # expression is empty is ${MISSING_INPUT}.
-    local ne_description=$1
-    local ne_check=$2
-    if [ -z "$ne_check" ]; then
-        >&2 echo "${STAMP}: cannot run without ${ne_description}"
-        cleanup "${MISSING_INPUT}"
-    fi
-    return 0
-}
-
-function log_setting {
-    # Make sure a setting is provided
-    # and report it
-    local ls_description=$1
-    local ls_setting=$2
-    not_empty "date stamp" "${STAMP}"
-    not_empty "$ls_description" "$ls_setting"
-    >&2 echo "${STAMP}: ${ls_description} is ${ls_setting}"
-    return 0
-}
-
-function check_exists {
-    # Make sure a file or folder or link exists
-    # then cleanup and quit if not
-    local ce_file_name=$1
-    log_setting "file or directory name that must exist" "$ce_file_name"
-    if ! [ -e "$ce_file_name" ]; then
-        >&2 echo "${STAMP}: cannot find $ce_file_name"
-        cleanup "$MISSING_FILE"
-    fi
-    return 0
-}
-
-function check_contains {
-    # Make sure a file exists and contains
-    # the given string.
-    local cc_file_name=$1
-    local cc_string=$2
-    log_setting "file name to check" "$cc_file_name"
-    log_setting "string to check for" "$cc_string"
-    not_empty "date stamp" "$STAMP"
-    if [ -e "$cc_file_name" ]; then
-        if ! grep -qs "${cc_string}" "${cc_file_name}"; then
-            >&2 echo "${STAMP}: ${cc_file_name} does not contain ${cc_string}"
-            cleanup "$BAD_CONFIGURATION"
-        fi
-    else
-        >&2 echo "${STAMP}: cannot find ${cc_file_name}"
-        cleanup "$MISSING_FILE"
-    fi
-    return 0
-}
-
-function path_as_name {
-    # Convert a path to a string that
-    # can be used as a name. This is sometimes
-    # useful for naming archives and so on.
-    local pan_path=$1
-    not_empty "path to convert to a name" "$pan_path"
-    echo "$pan_path" |\
-        sed 's:^/::' |\
-        sed 's:/:-:g' |\
-        sed 's/[[:space:]]/_/g'
-    return 0
-}
-
-function report {
-    # Inform the user of a non-zero return
-    # code, and if an exit
-    # message is provided as a third argument
-    # also exit cleanly
-    local r_rc=$1
-    local r_description=$2
-    local r_exit_message=$3
-    >&2 echo "${STAMP}: ${r_description} exited with code $r_rc"
-    if [ -z "$r_exit_message" ]; then
-        >&2 echo "${STAMP}: continuing . . ."
-    else
-        >&2 echo "${STAMP}: $r_exit_message"
-        cleanup $r_rc
-    fi
-    return $r_rc
-}
-
-function slow {
-    # Wait for all processes with given name to disappear
-    # rsync in particular seems to hang around
-
-    ##########################################################
-    # The number of seconds to wait is globally set as $WAIT #
-    ##########################################################
-
-    local s_pname=$1
-    log_setting "program name to wait for" "$s_pname"
-    for pid in $(pgrep $s_pname); do
-        while kill -0 "$pid" 2> /dev/null; do
-            >&2 echo "${STAMP}: ${s_pname} ${pid} is still running"
-            sleep ${WAIT}
-        done
-    done
-}
-
-function print_rule {
-    echo
-    echo "$RULE"
-    echo
-}
-
-function print_error_rule {
-    >&2 echo
-    >&2 echo "$RULE"
-    >&2 echo
-}
+# Load useful functions needed by this file and other includes
+. useful.sh
 
 #################################
 # Functions that run daily tasks
@@ -212,203 +53,9 @@ function magpie {
     return $rc
 }
 
-function firewall_active {
-    # Check the firewall is up
-    not_empty "date stamp" "$STAMP"
+. network.sh
 
-    >&2 echo "${STAMP}: firewall_active"
-
-    if sudo ufw status | grep -qs "Status: inactive"; then
-        sudo ufw enable || report $? "enable firewall"
-        if sudo ufw status | grep -qs "Status: inactive"; then
-            >&2 echo "${STAMP}: failed to activate firewall"
-            return "$SECURITY_FAILURE"
-        fi
-    fi
-    sudo ufw status numbered || report $? "state firewall rules"
-    return 0
-}
-
-function ping_router {
-    # Make sure we can ping the local router
-
-    ##########################################################
-    # The number of seconds to wait is globally set as $WAIT #
-    ##########################################################
-
-    local pr_intfc=$1
-    log_setting "interface for router ping" "$pr_intfc"
-    local pr_rc=1
-    local pr_count=0
-    while  [ "$pr_rc" -gt 0 ] && [ "$pr_count" -lt "$ATTEMPTS" ]; do
-        sleep ${WAIT}
-        ping -q -w 1 -c 1 `ip route |\
-                           grep default |\
-                           grep "$pr_intfc" |\
-                           cut -d ' ' -f 3`
-        pr_rc=$?
-        pr_count=$((pr_count+1))
-    done
-    if [ "$pr_rc" -gt 0 ]; then
-        report "$pr_rc" "ping to local router via $pr_intfc" "no network so stop"
-    fi
-    return 0
-}
-
-function ping_check {
-    # Check ping via given interface to given url
-    local pc_intfc=$1
-    local pc_tgt=$2
-    not_empty "date stamp" "$STAMP"
-    log_setting "interface to check" "$pc_intfc"
-    log_setting "url for ping" "$pc_tgt"
-
-    # Max lost packet percentage
-    local pc_max_loss=50
-    local pc_packet_count=10
-    local pc_timeout=20
-    local pc_packets_lost=$(ping -W $pc_timeout -c $pc_packet_count -I $pc_intfc $pc_tgt |\
-                            grep % |\
-                            awk '{print $6}')
-    if ! [ -n "$pc_packets_lost" ] || [ "$pc_packets_lost" == "100%" ]; then
-        cleanup $NETWORK_ERROR
-        >&2 echo "${STAMP}: all packets lost from ${pc_tgt} via ${pc_intfc}"
-    else
-        if [ "${pc_packets_lost}" == "0%" ]; then
-            return 0
-        else
-            # Packet loss rate between 0 and 100%
-            >&2 echo "${STAMP}: $pc_packets_lost packets \
-                      lost from ${pc_tgt} via ${pc_intfc}"
-            local pc_real_loss=$(echo $pc_packets_lost | sed 's/.$//')
-            if [[ ${pc_real_loss} -gt ${pc_max_loss} ]]; then
-                cleanup $NETWORK_ERROR
-            else
-                return 0
-            fi
-        fi
-    fi
-}
-
-function check_intfc {
-    # Check an interface is available
-    local ci_intfc=$1
-    log_setting "interface to check" "$ci_intfc"
-    local ci_intfc_list=$(ip link |\
-                          sed -n  '/^[0-9]*:/p' | grep UP | grep -v DOWN |\
-                          sed 's/^[0-9]*: \([0-9a-z]*\):.*/\1/')
-    for i in $ci_intfc_list; do
-        if [ "$i" == "$ci_intfc" ]; then
-            return 0
-        fi
-    done
-    return 1
-}
-
-function check_single_tunnel {
-    # Make sure there is only a single tunnel set up
-
-    >&2 echo "${STAMP}: check_single_tunnel"
-
-    local cst_count=$(ip link |\
-                      sed -n  '/^[0-9]*:/p' |\
-                      sed 's/^[0-9]*: \([0-9a-z]*\):.*/\1/' |\
-                      grep tun |\
-                      wc -l)
-    if [ "$cst_count" -eq 0 ]; then
-        >&2 echo "${STAMP}: tunnel not found"
-        return 1
-    else
-        if [ "$cst_count" -gt 1 ]; then
-            >&2 echo "${STAMP}: too many tunnels found"
-            cleanup "$NETWORK_ERROR"
-        else
-            return 0
-        fi
-    fi
-}
-
-function start_tunnel {
-    # Start the OpenVPN encrypted tunnel
-
-    >&2 echo "${STAMP}: start_tunnel"
-
-    local st_ovpn=$1
-    log_setting "OpenVPN configuration to start" "$st_ovpn"
-    killall openvpn || report $? "stopping any tunnel"
-    slow openvpn
-    sudo openvpn --daemon --config "$st_ovpn"
-    while ! check_single_tunnel; do
-        sleep "$WAIT"
-    done
-    return 0
-}
-
-function network_check {
-
-    >&2 echo "${STAMP}: network_check"
-
-    local nc_wired=$1
-    local nc_wireless=$2
-    local nc_tunnel=$3
-    local nc_default_ovpn=$4
-
-    # Make source network connection is as expected
-    log_setting "usual wired interface" "$nc_wired"
-    log_setting "usual wireless interface" "$nc_wireless"
-    log_setting "tunnel interface" "$nc_tunnel"
-    log_setting "default VPN configuration" "$nc_default_ovpn"
-
-    firewall_active
-    if check_intfc "$nc_wired"; then
-        sudo rfkill block wlan
-        ping_router "$nc_wired"
-    else
-        sudo rfkill unblock wlan
-        ping_router "$nc_wireless"
-    fi
-    if ! (check_intfc "$nc_tunnel" &&\
-          ping_check "$nc_tunnel" wiki.archlinux.org); then
-        start_tunnel $nc_default_ovpn
-    fi
-    return 0
-}
-
-function system_check {
-    # Check services are running
-
-    ##################################################################
-    # System units to check are set globally in ${UNITS_TO_CHECK[@]} #
-    ##################################################################
-
-    >&2 echo "${STAMP}: system_check"
-
-    print_rule
-    for svc in "${UNITS_TO_CHECK[@]}"; do
-        make_active "${svc}"
-        print_rule
-    done
-    return 0
-}
-
-function make_active {
-    # Make sure a systemd unit is active
-    local ma_unit=$1
-    log_setting "unit to activate" "$ma_unit"
-
-    if ! sudo systemctl is-active --quiet "$ma_unit"; then
-        sudo systemctl start "$ma_unit" ||\
-            report $? "starting $ma_unit"
-        if sudo systemctl is-failed --quiet "$ma_unit"; then
-            sudo systemctl status --no-pager --lines=10 "$ma_unit" ||\
-                report $? "get status of $ma_unit"
-            cleanup "$SYSTEM_UNIT_FAILURE"
-        fi
-    fi
-    sudo systemctl status --no-pager --lines=0 "$ma_unit" ||\
-        report $? "get status of $ma_unit"
-    return 0
-}
+. system.sh
 
 function run_package_maintenance {
     not_empty "date stamp" "$STAMP"
@@ -994,18 +641,22 @@ trap handle_signal 1 2 3 6 15
 # Set a stamp for use in messages and file names
 set_stamp
 
+echo $STAMP
+
 # Set the month for use in the encrypted folder to offload,
 # and other occasional maintenance.
 set_month
 
+echo $MONTH
+
 # Check the network
-# network_check   "$MAIN_WIRED" \
-#                 "$MAIN_WIRELESS" \
-#                 "$MAIN_TUNNEL" \
-#                 "$DEFAULT_VPN"
+network_check   "$MAIN_WIRED" \
+                "$MAIN_WIRELESS" \
+                "$MAIN_TUNNEL" \
+                "$DEFAULT_VPN"
 
 # System checks
-# system_check
+system_check
 
 # Run package related maintenance tasks
 # run_package_maintenance
