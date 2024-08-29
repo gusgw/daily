@@ -2,23 +2,7 @@
 
 # Daily maintenance tasks
 
-# Return codes
-#################################
-# MISSING_INPUT=60
-# MISSING_FILE=61
-# MISSING_FOLDER=62
-# MISSING_DISK=63
-# MISSING_MOUNT=64
-# BAD_CONFIGURATION=70
-# UNSAFE=71
-
-# SYSTEM_UNIT_FAILURE=80
-# SECURITY_FAILURE=81
-# NETWORK_ERROR=83
-
-# TRAPPED_SIGNAL=113
-#################################
-
+# Set return codes as used in general
 . return_codes.sh
 
 echo "TRAPPED_SIGNAL = "$TRAPPED_SIGNAL

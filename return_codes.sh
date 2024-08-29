@@ -1,4 +1,3 @@
-
 # Return codes
 #################################
 MISSING_INPUT=60
