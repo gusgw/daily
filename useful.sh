@@ -1,4 +1,17 @@
-# Utility functions
+##  Utility functions
+
+##  Settings
+#   STAMP   should be set by a call to set_stamp in this file.
+#   WAIT    is the time to wait in seconds between repeted attempts.
+#   RULE    is a separator to use in formatting outputs.
+
+##  Dependencies
+#   return_codes.sh
+#   settings.h
+#   useful.h
+
+##  Notes
+#   Run set_stamp and set_month before using the other routines.
 
 function set_stamp {
     # Store a stamp used to label files
