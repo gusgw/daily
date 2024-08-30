@@ -2,14 +2,19 @@
 
 # Daily maintenance tasks
 
+# Set the folder where dependencies can be found.
+# This is needed when the script is run via
+# a symbolic link.
+daily_path=$(dirname $(realpath  $0))
+
 # Set return codes as used in general
-. return_codes.sh
+. ${daily_path}/return_codes.sh
 
 # Settings for this script
-. settings.sh
+. ${daily_path}/settings.sh
 
 # Load useful functions needed by this file and other includes
-. useful.sh
+. ${daily_path}/useful.sh
 
 #################################
 # Functions that run daily tasks
@@ -37,24 +42,24 @@ function cleanup {
 }
 
 # Routines to check network works and is configured correctly
-. network.sh
+. ${daily_path}/network.sh
 
 # Routines to check some systemd units are active
-. system.sh
+. ${daily_path}/system.sh
 
 # Package updates and checks
-. package.sh
+. ${daily_path}/package.sh
 
 # Routine for mail synchronisation
-. magpie.sh
+. ${daily_path}/magpie.sh
 
  # Routines for backups
-. backup.sh
+. ${daily_path}/backup.sh
 
 # Load routine s
-. sensitive.sh
+. ${daily_path}/sensitive.sh
 
-. cloud.sh
+. ${daily_path}/cloud.sh
 
 # Start by setting a handler for signals that stop work
 trap handle_signal 1 2 3 6 15
