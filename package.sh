@@ -10,6 +10,11 @@
 #   return_codes.sh
 #   useful.sh
 
+##  Notes
+#   Output files are created in the user's home folder
+#   but deleted on clean up. It's assumed that they are
+#   usually saved somewhere before that cleanup.
+
 function run_package_maintenance {
     not_empty "date stamp" "$STAMP"
 
