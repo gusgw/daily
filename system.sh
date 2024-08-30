@@ -1,5 +1,12 @@
-# System check
-###############################################################################
+##  System check
+
+##  Settings
+#   UNITS_TO_CHECK  is list of systemd units to check.
+
+##  Dependencies
+#   return_codes.sh
+#   settings.sh
+#   useful.sh
 
 function system_check {
     # Check services are running
