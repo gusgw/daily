@@ -1,5 +1,8 @@
 ##  Settings for daily.sh
 
+##  Default
+#   USER
+
 #   Limits for parallel work
 MAX_SUBPROCESSES=16
 SIMULTANEOUS_TRANSFERS=32
