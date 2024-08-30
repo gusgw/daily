@@ -11,9 +11,15 @@
 #   useful.sh
 
 ##  Notes
+#   Several update and maintenance tasks mostly
+#   taken from the Arch Wiki.
 #   Output files are created in the user's home folder
 #   but deleted on clean up. It's assumed that they are
 #   usually saved somewhere before that cleanup.
+#   Running system updates without confirmation is also
+#   something that should be done with caution, though I
+#   find it is not a problem perhaps because I do check the
+#   Arch website for news and advice fairly often.
 
 function run_package_maintenance {
     not_empty "date stamp" "$STAMP"

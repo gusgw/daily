@@ -22,9 +22,31 @@
 #   useful.sh
 
 ##  Notes
+#   Backup everything not in `~/.exclude_local` to
+#   a key drive or similar. Controlled using
+#   global settings.
+#   Set a key file to decrypt the backup disk in the
+#   environment variable `KEY_FILE`.
+#   Make sure the backup device is set in the environment
+#   variable `BACKUP_DISK`.
+#   Make sure the backup name is set in the environment
+#   variable `BACKUP_NAME`. This will be used as the device
+#   name for the unlocked drive.
+#   Files to be excluded from the local backup are listed
+#   in `~/.exclude_local`, which is passed to `rsync`.
+#
+#   Send everything not in `~/.exclude_remote`
+#   to a remote destination after making sure
+#   secret folders are in the excludes.
 #   These routines copy to machines administered by me.
 #   See cloud.sh for archiving to S3 or the use of Proton
 #   and Google drives.
+#   Paths to remote backup should be `$REMOTE_BACKUP` and
+#   `$REMOTE_BACKUP_EXTRA`. The remote backup routine is
+#   applied to the home folder, and so includes a check that
+#   `${SECRET_FOLDERS[@]}` are included in the
+#   `~/.exclude_remote` list, which is passed to `rsync`.
+#   Usual remote backup destinations are set globally.
 #   Remote backups are run over MAIN_WIRED but not MAIN_WIRELESS.
 
 function run_local_backup {

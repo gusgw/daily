@@ -10,6 +10,12 @@
 #   settings.sh
 #   useful.sh
 
+##  Notes
+#   Routines here expect that a VPN is running and will
+#   start one if necessary. Note that arguments passed to
+#   network_check specify network interfaces and
+#   default VPN.
+
 function firewall_active {
     # Check the firewall is up
     not_empty "date stamp" "$STAMP"

@@ -13,8 +13,27 @@
 
 
 ##  Notes
+#   Remote archives are copies files and folders to S3
+#   style object storage, as opposed to disk storage.
+#   Folders archived are encrypted and sent via `rclone`.
+#   If the encrypted folder is mounted,
+#   make sure there is no harm in sending it
+#   to S3. If the test passes, unmount
+#   and clone to S3. This is done for a general
+#   archive as well as monthly sets.
+#   File lists are saved.
 #   rclone does not use the default configuration, instead it reads
 #   the more prominent ${HOME}/$(hostnamectl hostname)-rclone.conf.
+#
+#   The shared preparation routine sets up a copy of
+#   the folder tree with sensitive or secret files and
+#   folders removed so that it can be uploaded to
+#   a cloud file sharing system. The location for staging
+#   folders ready for upload is set as `$SHARED_STAGING`,
+#   an environment variable set in `.zshrc` or similar.
+#   Setup a folder full of usefully shared files,
+#   with anything sensitive automatically removed.
+
 
 function run_archive {
     # Run an encrypted archive to S3

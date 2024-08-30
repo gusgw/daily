@@ -8,6 +8,12 @@
 #   settings.sh
 #   useful.sh
 
+##  Notes
+#   This just checks that units listed in `${UNITS_TO_CHECK[@]}`
+#   are active, and if not attempts to start them,
+#   usually `syncthing` and `sshd`.
+#   Exit cleanly if these units have failed or are not running.
+
 function system_check {
     # Check services are running
 
