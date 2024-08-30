@@ -1,3 +1,15 @@
+##  Check network is available and configured
+
+##  Settings
+#   STAMP               should be set by a call to set_stamp in useful.sh.
+#   ATTEMPTS            number of tries
+#   WAIT                seconds between tries
+
+##  Dependencies
+#   return_codes.sh
+#   settings.sh
+#   useful.sh
+
 function firewall_active {
     # Check the firewall is up
     not_empty "date stamp" "$STAMP"
