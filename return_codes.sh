@@ -1,5 +1,5 @@
-# Return codes
-#################################
+##  Return codes
+
 MISSING_INPUT=60
 MISSING_FILE=61
 MISSING_FOLDER=62
@@ -13,4 +13,3 @@ SECURITY_FAILURE=81
 NETWORK_ERROR=83
 
 TRAPPED_SIGNAL=113
-#################################
