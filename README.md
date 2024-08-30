@@ -94,13 +94,6 @@ via a cloud storage service:
 
 * `SHARED_STAGING`
 
-Device `/dev/...` file for music player:
-
-* `MUSIC_PLAYER`
-
-Note that the source of the music files and the mountpoint
-are set in the script.
-
 Netowrk interfaces:
 
 * `MAIN_WIRELESS`
