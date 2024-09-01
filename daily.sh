@@ -2,7 +2,6 @@
 
 # Daily maintenance tasks
 
-
 # Set the folder where dependencies can be found.
 # This is needed when the script is run via
 # a symbolic link.
