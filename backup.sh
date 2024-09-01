@@ -145,7 +145,7 @@ function cleanup_local_backup {
     # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
 
-    >&2 echo "${STAMP}: DBG cleanup_local_backup"
+    >&2 echo "${STAMP}: cleanup_local_backup"
 
     killall rsync || report $? "kill the rsync processes"
     slow rsync
@@ -228,7 +228,7 @@ function cleanup_remote_backup {
     # handle trapped signals             #
     ######################################
 
-    >&2 echo "${STAMP}: DBG cleanup_remote_backup"
+    >&2 echo "${STAMP}: cleanup_remote_backup"
 
     killall rsync || report "$?" "kill the rsync processes"
     slow rsync

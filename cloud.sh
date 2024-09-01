@@ -128,7 +128,7 @@ function cleanup_run_archive {
     # handle trapped signals             #
     ######################################
 
-    >&2 echo "${STAMP}: DBG cleanup_run_archive"
+    >&2 echo "${STAMP}: cleanup_run_archive"
 
     killall rclone || report "$?" "kill the rclone processes"
     slow rclone
@@ -195,7 +195,7 @@ function cleanup_shared_preparation {
     # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
 
-    >&2 echo "${STAMP}: DBG cleanup_shared_preparation"
+    >&2 echo "${STAMP}: cleanup_shared_preparation"
 
     killall rsync || report "$?" "kill the rsync processes"
     slow rsync

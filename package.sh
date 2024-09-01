@@ -104,7 +104,7 @@ function cleanup_package_maintenance {
     # handle trapped signals             #
     ######################################
 
-    >&2 echo "${STAMP}: DBG cleanup_package_maintenance"
+    >&2 echo "${STAMP}: cleanup_package_maintenance"
 
     rm -f ${STAMP}-missing_system_file_list.txt
     rm -f ${STAMP}-altered_system_file_list.txt
