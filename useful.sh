@@ -145,3 +145,37 @@ function print_error_rule {
     >&2 echo "$RULE"
     >&2 echo
 }
+
+export cleanup_functions=()
+
+function cleanup {
+
+    ######################################
+    # If using the report function here, #
+    # make sure it has NO THIRD ARGUMENT #
+    # or there will be an infinite loop! #
+    # This function may be used to       #
+    # handle trapped signals             #
+    ######################################
+
+    local c_rc=$1
+    print_error_rule
+    >&2 echo "${STAMP}: exiting cleanly with code ${c_rc}. . ."
+    for cleanfn in "${cleanup_functions[@]}"
+    do
+        if [[ $cleanfn == cleanup_* ]]
+        then
+            $cleanfn
+        else
+            >&2 echo "${STAMP}: DBG not calling $cleanfn"
+        fi
+    done
+    >&2 echo "${STAMP}: . . . all done with code ${c_rc}"
+    exit $c_rc
+}
+
+function handle_signal {
+    # cleanup and use error code if we trap a signal
+    >&2 echo "${STAMP}: trapped signal"
+    cleanup "${TRAPPED_SIGNAL}"
+}
