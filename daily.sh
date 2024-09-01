@@ -34,9 +34,9 @@ function cleanup {
     >&2 echo "${STAMP}: exiting cleanly with code ${c_rc}. . ."
     cleanup_package_maintenance
     cleanup_run_archive
+    cleanup_shared_preparation
     cleanup_remote_backup
     cleanup_local_backup
-    cleanup_shared_preparation
     >&2 echo "${STAMP}: . . . all done with code ${c_rc}"
     exit $c_rc
 }
