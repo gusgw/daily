@@ -114,6 +114,8 @@ function run_archive {
     return 0
 }
 
+cleanup_functions+=('cleanup_run_archive')
+
 function cleanup_run_archive {
     # Clean up after remote backup
     # Make sure rsync is done
@@ -125,6 +127,8 @@ function cleanup_run_archive {
     # This function may be used to       #
     # handle trapped signals             #
     ######################################
+
+    >&2 echo "${STAMP}: cleanup_run_archive"
 
     killall rclone || report "$?" "kill the rclone processes"
     slow rclone
@@ -182,12 +186,16 @@ function run_shared_preparation {
     return 0
 }
 
+cleanup_functions+=('cleanup_shared_preparation')
+
 function cleanup_shared_preparation {
     # Clean up after preparation of shared folders
 
     ##########################################################################
     # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
+
+    >&2 echo "${STAMP}: cleanup_shared_preparation"
 
     killall rsync || report "$?" "kill the rsync processes"
     slow rsync

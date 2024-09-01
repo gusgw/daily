@@ -127,6 +127,8 @@ function run_local_backup {
     return 0
 }
 
+cleanup_functions+=('cleanup_local_backup')
+
 function cleanup_local_backup {
     # Clean up after local backup
     # Make sure rsync is done
@@ -142,6 +144,8 @@ function cleanup_local_backup {
     ##########################################################################
     # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
     ##########################################################################
+
+    >&2 echo "${STAMP}: cleanup_local_backup"
 
     killall rsync || report $? "kill the rsync processes"
     slow rsync
@@ -210,6 +214,8 @@ function run_remote_backup {
     return 0
 }
 
+cleanup_functions+=('cleanup_remote_backup')
+
 function cleanup_remote_backup {
     # Clean up after remote backup
     # Make sure rsync is done
@@ -221,6 +227,8 @@ function cleanup_remote_backup {
     # This function may be used to       #
     # handle trapped signals             #
     ######################################
+
+    >&2 echo "${STAMP}: cleanup_remote_backup"
 
     killall rsync || report "$?" "kill the rsync processes"
     slow rsync
