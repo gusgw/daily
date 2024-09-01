@@ -28,9 +28,10 @@ daily_path=$(dirname $(realpath  $0))
  # Routines for backups
 . ${daily_path}/backup.sh
 
-# Load routine s
+# Load routines to check for and remove sensitive files
 . ${daily_path}/sensitive.sh
 
+# Load routines for S3 archive and sharing via cloud drives
 . ${daily_path}/cloud.sh
 
 # Start by setting a handler for signals that stop work
