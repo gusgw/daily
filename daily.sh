@@ -8,7 +8,7 @@
 daily_path=$(dirname $(realpath  $0))
 
 # Load useful functions needed by this file and other includes
-. ${daily_path}/bump/useful.sh
+. ${daily_path}/bump/bump.sh
 
 # Settings for this script
 . ${daily_path}/settings.sh
