@@ -33,7 +33,12 @@ function cleanup {
     >&2 echo "${STAMP}: exiting cleanly with code ${c_rc}. . ."
     for cleanfn in "${cleanup_functions[@]}"
     do
-        $cleanfn
+        if [[ $cleanfn == cleanup_* ]]
+        then
+            $cleanfn
+        else
+            >&2 echo "${STAMP}: DBG not calling $cleanfn"
+        fi
     done
     >&2 echo "${STAMP}: . . . all done with code ${c_rc}"
     exit $c_rc
