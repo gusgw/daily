@@ -196,9 +196,3 @@ function cleanup_shared_preparation {
         "${SHARED_STAGING}/FILE_COUNT"
     return 0
 }
-
-function handle_signal {
-    # cleanup and use error code if we trap a signal
-    >&2 echo "${STAMP}: trapped signal during maintenance"
-    cleanup "${TRAPPED_SIGNAL}"
-}

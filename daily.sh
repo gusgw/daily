@@ -61,6 +61,12 @@ function cleanup {
 
 . ${daily_path}/cloud.sh
 
+function handle_signal {
+    # cleanup and use error code if we trap a signal
+    >&2 echo "${STAMP}: trapped signal during maintenance"
+    cleanup "${TRAPPED_SIGNAL}"
+}
+
 # Start by setting a handler for signals that stop work
 trap handle_signal 1 2 3 6 15
 
@@ -110,7 +116,7 @@ if [ -n "${MONTH}" ]; then
 fi
 
 # Offload previous month if necessary
-OLDMONTH=""
+OLDMONTH="202408"
 if [ -n "${OLDMONTH}" ]; then
     if [ -d "/mnt/data/${OLDMONTH}" ]; then
         run_archive "/mnt/data/${OLDMONTH}/clear" \
