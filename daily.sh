@@ -2,7 +2,6 @@
 
 # Daily maintenance tasks
 
-export cleanup_functions=()
 
 # Set the folder where dependencies can be found.
 # This is needed when the script is run via
@@ -17,32 +16,6 @@ daily_path=$(dirname $(realpath  $0))
 
 # Load useful functions needed by this file and other includes
 . ${daily_path}/useful.sh
-
-function cleanup {
-
-    ######################################
-    # If using the report function here, #
-    # make sure it has NO THIRD ARGUMENT #
-    # or there will be an infinite loop! #
-    # This function may be used to       #
-    # handle trapped signals             #
-    ######################################
-
-    local c_rc=$1
-    print_error_rule
-    >&2 echo "${STAMP}: exiting cleanly with code ${c_rc}. . ."
-    for cleanfn in "${cleanup_functions[@]}"
-    do
-        if [[ $cleanfn == cleanup_* ]]
-        then
-            $cleanfn
-        else
-            >&2 echo "${STAMP}: DBG not calling $cleanfn"
-        fi
-    done
-    >&2 echo "${STAMP}: . . . all done with code ${c_rc}"
-    exit $c_rc
-}
 
 # Routines to check network works and is configured correctly
 . ${daily_path}/network.sh
@@ -63,12 +36,6 @@ function cleanup {
 . ${daily_path}/sensitive.sh
 
 . ${daily_path}/cloud.sh
-
-function handle_signal {
-    # cleanup and use error code if we trap a signal
-    >&2 echo "${STAMP}: trapped signal during maintenance"
-    cleanup "${TRAPPED_SIGNAL}"
-}
 
 # Start by setting a handler for signals that stop work
 trap handle_signal 1 2 3 6 15
