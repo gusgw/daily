@@ -2,6 +2,8 @@
 
 # Daily maintenance tasks
 
+export cleanup_functions=()
+
 # Set the folder where dependencies can be found.
 # This is needed when the script is run via
 # a symbolic link.
@@ -16,9 +18,6 @@ daily_path=$(dirname $(realpath  $0))
 # Load useful functions needed by this file and other includes
 . ${daily_path}/useful.sh
 
-#################################
-# Functions that run daily tasks
-
 function cleanup {
 
     ######################################
@@ -32,11 +31,10 @@ function cleanup {
     local c_rc=$1
     print_error_rule
     >&2 echo "${STAMP}: exiting cleanly with code ${c_rc}. . ."
-    cleanup_package_maintenance
-    cleanup_run_archive
-    cleanup_shared_preparation
-    cleanup_remote_backup
-    cleanup_local_backup
+    for cleanfn in "${cleanup_functions[@]}"
+    do
+        $cleanfn
+    done
     >&2 echo "${STAMP}: . . . all done with code ${c_rc}"
     exit $c_rc
 }
@@ -73,13 +71,9 @@ trap handle_signal 1 2 3 6 15
 # Set a stamp for use in messages and file names
 set_stamp
 
-echo $STAMP
-
 # Set the month for use in the encrypted folder to offload,
 # and other occasional maintenance.
 set_month
-
-echo $MONTH
 
 # Check the network
 network_check   "$MAIN_WIRED" \

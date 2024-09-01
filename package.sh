@@ -90,6 +90,8 @@ function run_package_maintenance {
     return 0
 }
 
+cleanup_functions+=('cleanup_package_maintenance')
+
 function cleanup_package_maintenance {
     # Clean up after package maintenance
     # Get rid of lists of packages
@@ -101,6 +103,8 @@ function cleanup_package_maintenance {
     # This function may be used to       #
     # handle trapped signals             #
     ######################################
+
+    >&2 echo "${STAMP}: cleanup_package_maintenance"
 
     rm -f ${STAMP}-missing_system_file_list.txt
     rm -f ${STAMP}-altered_system_file_list.txt
