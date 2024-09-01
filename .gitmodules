@@ -1,0 +1,3 @@
+[submodule "bump"]
+	path = bump
+	url = https://github.com/gusgw/bump.git
