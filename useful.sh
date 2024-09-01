@@ -13,6 +13,8 @@
 ##  Notes
 #   Run set_stamp and set_month before using the other routines.
 
+. return_codes.sh
+
 function set_stamp {
     # Store a stamp used to label files
     # and messages created in this script.

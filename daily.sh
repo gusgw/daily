@@ -8,14 +8,13 @@
 # a symbolic link.
 daily_path=$(dirname $(realpath  $0))
 
-# Set return codes as used in general
-. ${daily_path}/return_codes.sh
+# Load useful functions needed by this file and other includes
+. ${daily_path}/bump/useful.sh
+
+echo "DBG: $TRAPPED_SIGNAL"
 
 # Settings for this script
 . ${daily_path}/settings.sh
-
-# Load useful functions needed by this file and other includes
-. ${daily_path}/useful.sh
 
 # Routines to check network works and is configured correctly
 . ${daily_path}/network.sh
