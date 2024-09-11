@@ -34,7 +34,7 @@ function magpie {
         ${HOME}/magpie sync 2>&1
         conda deactivate
     else
-        report "$rc" "setup conda for magpie"
+        report "$rc" "no mail server"
     fi
     return $rc
 }
