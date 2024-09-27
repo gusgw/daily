@@ -19,8 +19,7 @@ ATTEMPTS=10
 #   Make sure these units are active
 UNITS_TO_CHECK=( "syncthing@${USER}.service" \
                  'sshd.service' \
-                 'apparmor.service' \
-                 'updatedb.timer' )
+                 'apparmor.service')
 
 #   Automatically ensure that these folders and files
 #   are not copied to remote backups etc.
