@@ -34,6 +34,9 @@ daily_path=$(dirname $(realpath  $0))
 # Load routines for S3 archive and sharing via cloud drives
 . ${daily_path}/cloud.sh
 
+# Get issues and so on
+. ${daily_path}/bug.sh
+
 # Start by setting a handler for signals that stop work
 trap handle_signal 1 2 3 6 15
 
@@ -58,6 +61,9 @@ run_package_maintenance
 
 # Run organiser
 magpie
+
+# Get bugs and issues
+bug
 
 # Run the backups
 run_local_backup
