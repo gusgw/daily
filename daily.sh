@@ -85,7 +85,7 @@ if [ -n "${MONTH}" ]; then
 fi
 
 # Offload previous month if necessary
-OLDMONTH="202408"
+OLDMONTH=""
 if [ -n "${OLDMONTH}" ]; then
     if [ -d "/mnt/data/${OLDMONTH}" ]; then
         run_archive "/mnt/data/${OLDMONTH}/clear" \
