@@ -44,12 +44,11 @@ function ping_router {
     log_setting "interface for router ping" "$pr_intfc"
     local pr_rc=1
     local pr_count=0
+    local pr_router="$(ip route | grep default | grep "$pr_intfc" | cut -d ' ' -f 3)"
+    [ -n "${pr_counter}" ] || report $? "no router on $pr_intfc" || return $?
     while  [ "$pr_rc" -gt 0 ] && [ "$pr_count" -lt "$ATTEMPTS" ]; do
         sleep ${WAIT}
-        ping -q -w 1 -c 1 `ip route |\
-                           grep default |\
-                           grep "$pr_intfc" |\
-                           cut -d ' ' -f 3`
+        ping -q -w 1 -c 1 "${pr_router}"
         pr_rc=$?
         pr_count=$((pr_count+1))
     done
