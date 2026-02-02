@@ -1,0 +1,65 @@
+# Sanoid configuration for the main local pool
+# Copy this file to sanoid.conf and adjust dataset names for your setup.
+#
+# For external pools, create a separate config directory:
+#   sudo sanoid --configdir=/etc/sanoid/external --cron
+
+[pool/user/cloud]
+	use_template = production
+	recursive = zfs
+
+[pool/user/encrypted]
+	use_template = production
+	recursive = zfs
+
+[pool/user/local]
+	use_template = production
+	recursive = zfs
+
+[pool/user/src]
+	use_template = production
+	recursive = zfs
+
+[pool/data]
+	use_template = production
+	recursive = zfs
+
+#############################
+# templates below this line #
+#############################
+
+[template_production]
+	frequently = 0
+	hourly = 48
+	daily = 31
+	monthly = 3
+	yearly = 10
+	autosnap = yes
+	autoprune = yes
+
+[template_archive]
+	frequently = 0
+	hourly = 0
+	daily = 1
+	monthly = 3
+	yearly = 10
+	autosnap = yes
+	autoprune = yes
+
+[template_backup]
+	autoprune = yes
+	frequently = 0
+	hourly = 48
+	daily = 90
+	monthly = 12
+	yearly = 10
+	autosnap = no
+	hourly_warn = 2880
+	hourly_crit = 3600
+	daily_warn = 48
+	daily_crit = 60
+
+[template_ignore]
+	autoprune = no
+	autosnap = no
+	monitor = no

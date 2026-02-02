@@ -1,0 +1,40 @@
+# Sanoid configuration for an external backup pool
+# Copy this file to a subdirectory (e.g., sanoid/external/sanoid.conf)
+# and adjust dataset names for your setup.
+#
+# Run manually when the external pool is imported:
+#   sudo sanoid --configdir=/etc/sanoid/external --cron
+
+[extpool/backup/user]
+	use_template = archive
+	recursive = zfs
+
+[extpool/backup/data]
+	use_template = archive
+	recursive = zfs
+
+#############################
+# templates below this line #
+#############################
+
+[template_archive]
+	frequently = 0
+	hourly = 0
+	daily = 1
+	monthly = 3
+	yearly = 10
+	autosnap = yes
+	autoprune = yes
+
+[template_backup]
+	autoprune = yes
+	frequently = 0
+	hourly = 48
+	daily = 90
+	monthly = 12
+	yearly = 10
+	autosnap = no
+	hourly_warn = 2880
+	hourly_crit = 3600
+	daily_warn = 48
+	daily_crit = 60

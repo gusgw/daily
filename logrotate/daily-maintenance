@@ -1,0 +1,7 @@
+/var/log/daily-maintenance.log {
+    monthly
+    rotate 3
+    compress
+    missingok
+    notifempty
+}

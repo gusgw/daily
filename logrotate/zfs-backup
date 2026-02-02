@@ -1,0 +1,7 @@
+/var/log/zfs-backup-*.log {
+    monthly
+    rotate 3
+    compress
+    missingok
+    notifempty
+}
