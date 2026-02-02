@@ -1,206 +1,334 @@
-##  Copy or archive to cloud storage services
+#!/bin/bash
+##  Sync to cloud storage services via rclone
 
 ##  Settings
-#   STAMP                   should be set by a call to set_stamp in useful.sh.
-#   SHARED_STAGING          store a copy of shared folders ready for upload to a cloud drive
+#   STAMP                   should be set by a call to set_stamp in bump.sh
+#   CLOUD_SYNCS             array of sync configurations
 #   SIMULTANEOUS_TRANSFERS  number of simultaneous transfers for rclone
-#   WAIT                    seconds between tries
 
 ##  Dependencies
 #   return_codes.sh
 #   settings.sh
-#   useful.sh
-
+#   bump.sh
+#   sensitive.sh (for check_sensitive_files, build_rclone_excludes)
 
 ##  Notes
-#   Remote archives are copies files and folders to S3
-#   style object storage, as opposed to disk storage.
-#   Folders archived are encrypted and sent via `rclone`.
-#   If the encrypted folder is mounted,
-#   make sure there is no harm in sending it
-#   to S3. If the test passes, unmount
-#   and clone to S3. This is done for a general
-#   archive as well as monthly sets.
-#   File lists are saved.
-#   rclone does not use the default configuration, instead it reads
-#   the more prominent ${HOME}/$(hostnamectl hostname)-rclone.conf.
-#
-#   The shared preparation routine sets up a copy of
-#   the folder tree with sensitive or secret files and
-#   folders removed so that it can be uploaded to
-#   a cloud file sharing system. The location for staging
-#   folders ready for upload is set as `$SHARED_STAGING`,
-#   an environment variable set in `.zshrc` or similar.
-#   Setup a folder full of usefully shared files,
-#   with anything sensitive automatically removed.
+#   Cloud syncs use rclone bisync for bidirectional synchronization
+#   Sensitive files are excluded using patterns from settings.sh
+#   rclone configuration is expected at ~/.config/rclone/rclone.conf
 
+# =============================================================================
+#   RCLONE SYNC FUNCTIONS
+# =============================================================================
 
-function run_archive {
-    # Run an encrypted archive to S3
+function run_rclone_bisync {
+    # Run bidirectional sync using rclone bisync
+    #
+    # Arguments:
+    #   $1 - Local path
+    #   $2 - Remote (format: "remote:path")
+    #   $3 - (optional) "dry-run" to preview changes
+    #
+    # Returns:
+    #   0 - Sync completed successfully
+    #   Non-zero - Sync failed
 
-    ##########################################################
-    # The number of seconds to wait is globally set as $WAIT #
-    ##########################################################
+    local rrb_local=$1
+    local rrb_remote=$2
+    local rrb_dry_run=$3
 
-    ###################################################
-    # The number of transfers at once is globally set #
-    # as $SIMULTANEOUS_TRANSFERS                      #
-    ###################################################
+    not_empty "bisync local path" "$rrb_local"
+    not_empty "bisync remote" "$rrb_remote"
 
-    >&2 echo "${STAMP}: run_archive"
+    log_message "run_rclone_bisync"
 
-    local clear=$(realpath "$1")
-    local src=$(realpath "$2")
-    local remote=$3
-    local conf="${HOME}/$(hostnamectl hostname)-rclone.conf"
+    log_setting "bisync local" "$rrb_local"
+    log_setting "bisync remote" "$rrb_remote"
 
-    log_setting "cleartext to archive" "$clear"
-    log_setting "folder to archive" "$src"
-    log_setting "remote" "$remote"
-    log_setting "remote configuration" "$conf"
-
-    check_contains "$conf" "$remote"
-
-    if [ ! -d "${clear}" ]; then
-        >&2 echo "${STAMP}: cannot find ${clear}"
-        return "${MISSING_FOLDER}"
+    # Validate local path
+    if [ ! -d "$rrb_local" ]; then
+        log_message "local path does not exist: ${rrb_local}"
+        return "$MISSING_FOLDER"
     fi
 
-    if [ ! -d "${src}" ]; then
-        >&2 echo "${STAMP}: cannot find ${src}"
-        return "${MISSING_FOLDER}"
+    # Check for rclone command
+    if ! command -v rclone &>/dev/null; then
+        report "$MISSING_FILE" "rclone command not found"
+        return "$MISSING_FILE"
     fi
 
-    if grep -qs "cryfs@${src} ${clear}" /proc/mounts; then
-        if remove_sensitive_data "${clear}"; then
+    # Build exclusion arguments
+    local -a rrb_excludes
+    mapfile -t rrb_excludes < <(get_rclone_exclude_array)
 
-            listing=$(path_as_name ${src}) ||\
-                report $? "construct filename"
-            contents="${HOME}/${STAMP}-${listing}.txt"
+    # Build command
+    local -a rrb_cmd=(rclone bisync)
+    rrb_cmd+=(--copy-links)
+    rrb_cmd+=(--progress)
+    rrb_cmd+=(--transfers "${SIMULTANEOUS_TRANSFERS:-4}")
+    rrb_cmd+=("${rrb_excludes[@]}")
 
-            echo "cryfs@${src} ${clear}" >> ${contents}
-            tree "${clear}" 1>> ${contents} ||\
-                report $? "save the tree of archived folders"
+    # Add dry-run if requested
+    if [ "$rrb_dry_run" == "dry-run" ]; then
+        rrb_cmd+=(--dry-run)
+        log_message "DRY RUN - no changes will be made"
+    fi
 
-            cryfs-unmount "${clear}" ||\
-                report $? "unmounting encrypted archive" \
-                          "no sync if archive is mounted"
+    rrb_cmd+=("$rrb_remote" "$rrb_local")
 
-            while grep -qs "cryfs@${src} ${clear}" /proc/mounts; do
-                >&2 echo "${STAMP}: ${src} is mounted"
-                sleep "${WAIT}"
-            done
-            until [ -z "$(ls -A ${clear})" ]; do
-                >&2 echo "${STAMP}: ${clear} is not empty"
-                sleep "${WAIT}"
-            done
+    # Log the command
+    log_message "Running: ${rrb_cmd[*]}"
 
-            rclone sync --config  "$conf" \
-                        --progress \
-                        --transfers "${SIMULTANEOUS_TRANSFERS}" \
-                        --delete-excluded \
-                        --exclude cryfs.config \
-                        "${src}/" \
-                        "${remote}:" ||\
-                report $? "sync archive to remote"
+    # Run the sync
+    "${rrb_cmd[@]}" || {
+        local rc=$?
+        # bisync returns 2 for "resync required" which isn't a real error
+        if [ "$rc" -eq 2 ]; then
+            log_message "bisync requires --resync (first run or changes detected)"
+            log_message "Run manually: rclone bisync --resync ${rrb_local} ${rrb_remote}"
         else
-            >&2 echo "${STAMP}: failed to remove sensitive data"
+            report "$rc" "rclone bisync failed"
         fi
-    else
-        >&2 echo "${STAMP}: ${src} not mounted, cannot check security"
-        return "${MISSING_MOUNT}"
+        return "$rc"
+    }
+
+    log_message "bisync completed: ${rrb_local} <-> ${rrb_remote}"
+    return 0
+}
+
+function run_rclone_sync {
+    # Run one-way sync using rclone sync (deletes files at destination)
+    #
+    # Arguments:
+    #   $1 - Source path (local or remote)
+    #   $2 - Destination path (local or remote)
+    #   $3 - (optional) "dry-run" to preview changes
+    #
+    # Returns:
+    #   0 - Sync completed successfully
+    #   Non-zero - Sync failed
+
+    local rrs_source=$1
+    local rrs_dest=$2
+    local rrs_dry_run=$3
+
+    not_empty "sync source" "$rrs_source"
+    not_empty "sync destination" "$rrs_dest"
+
+    log_message "run_rclone_sync"
+
+    log_setting "sync source" "$rrs_source"
+    log_setting "sync destination" "$rrs_dest"
+
+    # Check for rclone command
+    if ! command -v rclone &>/dev/null; then
+        report "$MISSING_FILE" "rclone command not found"
+        return "$MISSING_FILE"
     fi
 
+    # Build exclusion arguments
+    local -a rrs_excludes
+    mapfile -t rrs_excludes < <(get_rclone_exclude_array)
+
+    # Build command
+    local -a rrs_cmd=(rclone sync)
+    rrs_cmd+=(--progress)
+    rrs_cmd+=(--transfers "${SIMULTANEOUS_TRANSFERS:-4}")
+    rrs_cmd+=("${rrs_excludes[@]}")
+
+    if [ "$rrs_dry_run" == "dry-run" ]; then
+        rrs_cmd+=(--dry-run)
+        log_message "DRY RUN - no changes will be made"
+    fi
+
+    rrs_cmd+=("$rrs_source" "$rrs_dest")
+
+    log_message "Running: ${rrs_cmd[*]}"
+
+    "${rrs_cmd[@]}" || {
+        local rc=$?
+        report "$rc" "rclone sync failed"
+        return "$rc"
+    }
+
+    log_message "sync completed: ${rrs_source} -> ${rrs_dest}"
     return 0
 }
 
-cleanup_functions+=('cleanup_run_archive')
+function run_rclone_copy {
+    # Run one-way copy using rclone copy (does not delete at destination)
+    #
+    # Arguments:
+    #   $1 - Source path (local or remote)
+    #   $2 - Destination path (local or remote)
+    #   $3 - (optional) "dry-run" to preview changes
+    #
+    # Returns:
+    #   0 - Copy completed successfully
+    #   Non-zero - Copy failed
 
-function cleanup_run_archive {
-    # Clean up after remote backup
-    # Make sure rsync is done
+    local rrc_source=$1
+    local rrc_dest=$2
+    local rrc_dry_run=$3
 
-    ######################################
-    # If using the report function here, #
-    # make sure it has NO THIRD ARGUMENT #
-    # or there will be an infinite loop! #
-    # This function may be used to       #
-    # handle trapped signals             #
-    ######################################
+    not_empty "copy source" "$rrc_source"
+    not_empty "copy destination" "$rrc_dest"
 
-    >&2 echo "${STAMP}: cleanup_run_archive"
+    log_message "run_rclone_copy"
 
-    killall rclone || report "$?" "kill the rclone processes"
-    slow rclone
+    log_setting "copy source" "$rrc_source"
+    log_setting "copy destination" "$rrc_dest"
+
+    # Check for rclone command
+    if ! command -v rclone &>/dev/null; then
+        report "$MISSING_FILE" "rclone command not found"
+        return "$MISSING_FILE"
+    fi
+
+    # Build exclusion arguments
+    local -a rrc_excludes
+    mapfile -t rrc_excludes < <(get_rclone_exclude_array)
+
+    # Build command
+    local -a rrc_cmd=(rclone copy)
+    rrc_cmd+=(--progress)
+    rrc_cmd+=(--transfers "${SIMULTANEOUS_TRANSFERS:-4}")
+    rrc_cmd+=("${rrc_excludes[@]}")
+
+    if [ "$rrc_dry_run" == "dry-run" ]; then
+        rrc_cmd+=(--dry-run)
+        log_message "DRY RUN - no changes will be made"
+    fi
+
+    rrc_cmd+=("$rrc_source" "$rrc_dest")
+
+    log_message "Running: ${rrc_cmd[*]}"
+
+    "${rrc_cmd[@]}" || {
+        local rc=$?
+        report "$rc" "rclone copy failed"
+        return "$rc"
+    }
+
+    log_message "copy completed: ${rrc_source} -> ${rrc_dest}"
     return 0
 }
 
-function run_shared_preparation {
-    # Prepare some files for sharing via SHARED_STAGING
+# =============================================================================
+#   CLOUD SYNC DISPATCHER
+# =============================================================================
 
-    ##########################################################################
-    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
-    ##########################################################################
+function run_cloud_sync {
+    # Run a cloud sync based on CLOUD_SYNCS entry
+    #
+    # Arguments:
+    #   $1 - Sync configuration string
+    #        Format: "local_path:remote_name:remote_path[:mode]"
+    #        mode is optional: "bisync" (default), "sync", or "copy"
+    #   $2 - (optional) "dry-run" to preview changes
+    #
+    # Returns:
+    #   0 - Sync completed
+    #   Non-zero - Sync failed
 
-    >&2 echo "${STAMP}: run_shared_preparation"
+    local rcs_config=$1
+    local rcs_dry_run=$2
 
-    local src=$(realpath "$1")
-    local src_folder_name=$(basename $src)
-    local staging_area=$(realpath "${SHARED_STAGING}/${src_folder_name}")
+    not_empty "cloud sync config" "$rcs_config"
 
-    log_setting "directory to backup" "$src"
-    log_setting "path to staging areas" "$staging_area"
-    check_exists "${src}/.include_shared"
+    log_message "run_cloud_sync"
 
-    # Clean out all folders from the staging area
-    for f in ${staging_area}/*; do
-        if [ -d "$f" ]; then
-            rm -rf $f
+    # Parse configuration
+    # Format: "local_path:remote_name:" or "local_path:remote_name::mode"
+    # The trailing colon after remote_name is required (rclone remote format)
+    local rcs_local rcs_remote_name rcs_remote_path rcs_mode
+
+    # Split by colon
+    IFS=':' read -r rcs_local rcs_remote_name rcs_remote_path rcs_mode <<< "$rcs_config"
+
+    if [ -z "$rcs_local" ] || [ -z "$rcs_remote_name" ]; then
+        log_message "invalid sync config: ${rcs_config}"
+        log_message "expected format: local_path:remote_name:[:mode]"
+        return 1
+    fi
+
+    # Build remote string (remote_name: or remote_name:path)
+    local rcs_remote="${rcs_remote_name}:"
+    if [ -n "$rcs_remote_path" ]; then
+        rcs_remote="${rcs_remote}${rcs_remote_path}"
+    fi
+
+    # Default mode is bisync
+    rcs_mode="${rcs_mode:-bisync}"
+
+    log_setting "cloud sync local" "$rcs_local"
+    log_setting "cloud sync remote" "$rcs_remote"
+    log_setting "cloud sync mode" "$rcs_mode"
+
+    # Check local path exists
+    if [ ! -d "$rcs_local" ]; then
+        log_message "local path does not exist: ${rcs_local}"
+        return "$MISSING_FOLDER"
+    fi
+
+    # Run appropriate sync function
+    case "$rcs_mode" in
+        bisync)
+            run_rclone_bisync "$rcs_local" "$rcs_remote" "$rcs_dry_run"
+            ;;
+        sync)
+            run_rclone_sync "$rcs_local" "$rcs_remote" "$rcs_dry_run"
+            ;;
+        copy)
+            run_rclone_copy "$rcs_local" "$rcs_remote" "$rcs_dry_run"
+            ;;
+        *)
+            log_message "unknown sync mode: ${rcs_mode}"
+            log_message "valid modes: bisync, sync, copy"
+            return 1
+            ;;
+    esac
+}
+
+function run_all_cloud_syncs {
+    # Run all configured cloud syncs
+    # Iterates through CLOUD_SYNCS array
+    #
+    # Arguments:
+    #   $1 - (optional) "dry-run" to preview all syncs
+    #
+    # Format of CLOUD_SYNCS entries:
+    #   "local_path:remote_name:remote_path[:mode]"
+    #   mode is optional: bisync (default), sync, or copy
+
+    local racs_dry_run="${1:-}"
+    local racs_dry_prefix=""
+    if [ "$racs_dry_run" = "dry-run" ]; then
+        racs_dry_prefix="[DRY-RUN] "
+    fi
+
+    log_message "${racs_dry_prefix}run_all_cloud_syncs"
+
+    if [ ${#CLOUD_SYNCS[@]} -eq 0 ]; then
+        log_message "${racs_dry_prefix}no cloud syncs configured"
+        return 0
+    fi
+
+    local racs_failed=0
+
+    for config in "${CLOUD_SYNCS[@]}"; do
+        log_message "processing cloud sync: ${config}"
+
+        if ! run_cloud_sync "$config" "$racs_dry_run"; then
+            racs_failed=$((racs_failed + 1))
         fi
     done
 
-    # Synchroinuse to staging
-    while read f; do
-        echo $f
-        if [ -n "$f" ]; then
-            check_exists "${src}/${f}"
-            if [[ "$staging_area" != "${src}/${f}"* ]]; then
-                mkdir -p "${staging_area}/${f}"
-                rsync  -av \
-                       --links \
-                       --progress \
-                       --delete \
-                       "${src}/${f}/" \
-                       "${staging_area}/${f}/" ||\
-                    report "$?" "staging files via rsync"
-            else
-                >&2  echo "${STAMP}: $staging_area is in ${src}/${f}"
-                cleanup "$BAD_CONFIGURATION"
-            fi
-        fi
-    done < "${src}/.include_shared"
+    if [ "$racs_failed" -gt 0 ]; then
+        log_message "${racs_failed} cloud sync(s) failed"
+    else
+        log_message "all cloud syncs completed"
+    fi
 
-    # Remove anything we do not share via cloud
-    remove_sensitive_data "${SHARED_STAGING}"
-
-    return 0
-}
-
-cleanup_functions+=('cleanup_shared_preparation')
-
-function cleanup_shared_preparation {
-    # Clean up after preparation of shared folders
-
-    ##########################################################################
-    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
-    ##########################################################################
-
-    >&2 echo "${STAMP}: cleanup_shared_preparation"
-
-    killall rsync || report "$?" "kill the rsync processes"
-    slow rsync
-    remove_sensitive_data "${SHARED_STAGING}"
-    echo $(find "${SHARED_STAGING}" -type f | wc -l)  >\
-        "${SHARED_STAGING}/FILE_COUNT"
     return 0
 }

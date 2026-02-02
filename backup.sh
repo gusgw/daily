@@ -1,278 +1,456 @@
-##  Run local and remote backups
+#!/bin/bash
+##  Run ZFS and root filesystem backups
 
 ##  Settings
-#   STAMP               should be set by a call to set_stamp in useful.sh.
-#   KEY_FILE            decrypt local backup destination
-#   BACKUP_DISK         path to backup disk device by-uuid
-#   BACKUP_NAME         name to use in mount
-#   EXTRA_BACKUP_DISK   add a second backup disk by-uuid
-#   EXTRA_BACKUP_NAME   name of mount for second backup disk
-#   MAIN_WIRED          expected wired interface
-#   MAIN_WIRELESS       expected wireless interface
-#   SECRET_FOLDERS      make sure these folders are in .exclude_remote
-#   ~/.exclude_local    list of files and folders to exclude from local backup
-#   ~/.exclude_remote   list of files and folders to exclude from remote backup
-
-##  Default
-#   HOME
+#   STAMP               should be set by a call to set_stamp in bump.sh
+#   ZFS_BACKUP_TARGETS  array of zbackup config names
+#   SYNCOID_TARGETS     array of source datasets to replicate
+#   SYNCOID_REMOTE_HOST remote host for syncoid replication
+#   SYNCOID_REMOTE_POOL destination pool on remote host
+#   BACKUP_CONFIGS_DIR  directory containing backup configuration files
+#   SSH_TIMEOUT         timeout for SSH connectivity checks
 
 ##  Dependencies
 #   return_codes.sh
 #   settings.sh
-#   useful.sh
+#   bump.sh
+#   network.sh (for check_host_reachable)
 
 ##  Notes
-#   Backup everything not in `~/.exclude_local` to
-#   a key drive or similar. Controlled using
-#   global settings.
-#   Set a key file to decrypt the backup disk in the
-#   environment variable `KEY_FILE`.
-#   Make sure the backup device is set in the environment
-#   variable `BACKUP_DISK`.
-#   Make sure the backup name is set in the environment
-#   variable `BACKUP_NAME`. This will be used as the device
-#   name for the unlocked drive.
-#   Files to be excluded from the local backup are listed
-#   in `~/.exclude_local`, which is passed to `rsync`.
-#
-#   Send everything not in `~/.exclude_remote`
-#   to a remote destination after making sure
-#   secret folders are in the excludes.
-#   These routines copy to machines administered by me.
-#   See cloud.sh for archiving to S3 or the use of Proton
-#   and Google drives.
-#   Paths to remote backup should be `$REMOTE_BACKUP` and
-#   `$REMOTE_BACKUP_EXTRA`. The remote backup routine is
-#   applied to the home folder, and so includes a check that
-#   `${SECRET_FOLDERS[@]}` are included in the
-#   `~/.exclude_remote` list, which is passed to `rsync`.
-#   Usual remote backup destinations are set globally.
-#   Remote backups are run over MAIN_WIRED but not MAIN_WIRELESS.
+#   Local ZFS backups use the zbackup script for ZFS send/receive
+#   Remote ZFS replication uses syncoid (part of sanoid package)
+#   Root filesystem backup uses rbackup script for rsync to /mnt/root
 
-function run_local_backup {
-    # Local backup
+# =============================================================================
+#   DRIVE DETECTION
+# =============================================================================
 
-    ##########################################################################
-    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
-    ##########################################################################
+function check_drive_connected {
+    # Check if a drive is connected by its disk ID
+    #
+    # Arguments:
+    #   $1 - Drive ID (as found in /dev/disk/by-id/)
+    #
+    # Returns:
+    #   0 - Drive is connected
+    #   1 - Drive is not connected
+    #
+    # Example:
+    #   check_drive_connected "usb-My_Drive_Model_Serial-0:0"
 
-    >&2 echo "${STAMP}: run_local_backup"
+    local cdc_drive_id=$1
 
-    local home_folder_name=$(basename $HOME)
-    local backup_destination="/mnt/${BACKUP_NAME}/${home_folder_name}"
-    local extra_backup_destination="/mnt/${EXTRA_BACKUP_NAME}/${home_folder_name}"
-
-    not_empty "date stamp" "$STAMP"
-    log_setting "name of the file with encryption key for local backup" \
-                "$KEY_FILE"
-    log_setting "device path for local encrypted backup" "$BACKUP_DISK"
-    log_setting "name of the backup" "$BACKUP_NAME"
-    log_setting "device path for extra local encrypted backup" "$EXTRA_BACKUP_DISK"
-    log_setting "name of extra backup" "$EXTRA_BACKUP_NAME"
-
-    check_exists "${HOME}/.exclude_local"
-
-    if [ -e "$BACKUP_DISK" ]; then
-        sudo cryptsetup open --key-file="$KEY_FILE"\
-                             "$BACKUP_DISK" \
-                             "$BACKUP_NAME" ||\
-            report $? "unlock backup disk"
-        sudo fsck -a "/dev/mapper/$BACKUP_NAME" ||\
-            report $? "running file system check on /dev/mapper/$BACKUP_NAME"
-        sudo mount "/dev/mapper/$BACKUP_NAME" "/mnt/$BACKUP_NAME" ||\
-            report $? "mount backup disk"
-        if [ -d "$backup_destination" ]; then
-            sudo rsync  -av \
-                        --links \
-                        --progress \
-                        --delete \
-                        --delete-excluded \
-                        --exclude-from="${HOME}/.exclude_local" \
-                        "${HOME}/" \
-                        "${backup_destination}/" ||\
-                    report $? "local backup via rsync"
-        else
-            >&2 echo "${STAMP}: local backup destination not found"
-        fi
-    else
-        >&2 echo "${STAMP}:  local backup device not found"
+    if [ -z "$cdc_drive_id" ]; then
+        log_message "check_drive_connected: no drive ID specified"
+        return 1
     fi
 
-    if [ -e "$EXTRA_BACKUP_DISK" ]; then
-        sudo cryptsetup open --key-file="$KEY_FILE"\
-                             "$EXTRA_BACKUP_DISK" \
-                             "$EXTRA_BACKUP_NAME" ||\
-            report $? "unlock extra backup disk"
-        sudo fsck -a "/dev/mapper/$EXTRA_BACKUP_NAME" ||\
-            report $? "running file system check on /dev/mapper/$EXTRA_BACKUP_NAME"
-        sudo mount "/dev/mapper/$EXTRA_BACKUP_NAME" "/mnt/$EXTRA_BACKUP_NAME" ||\
-            report $? "mount extra backup disk"
-        if [ -d "$extra_backup_destination" ]; then
-            sudo rsync  -av \
-                        --links \
-                        --progress \
-                        --delete \
-                        --delete-excluded \
-                        --exclude-from="${HOME}/.exclude_local" \
-                        "${HOME}/" \
-                        "${extra_backup_destination}/" ||\
-                    report $? "extra local backup via rsync"
-        else
-            >&2 echo "${STAMP}: extra local backup destination not found"
-        fi
+    if [ -e "/dev/disk/by-id/${cdc_drive_id}" ]; then
+        log_message "drive ${cdc_drive_id} is connected"
+        return 0
     else
-        >&2 echo "${STAMP}: extra local backup device not found"
+        log_message "drive ${cdc_drive_id} is not connected"
+        return 1
+    fi
+}
+
+# =============================================================================
+#   LOCAL ZFS BACKUP FUNCTIONS
+# =============================================================================
+
+function run_zfs_local_backup {
+    # Run a local ZFS backup using the zbackup script
+    #
+    # Arguments:
+    #   $1 - Config name (matching a file in backup-configs/) - zbackup resolves the path
+    #   $2 - (optional) "dry-run" to preview without making changes
+    #
+    # Returns:
+    #   0 - Backup completed successfully
+    #   Non-zero - Backup failed or skipped
+
+    local rzlb_config="${1:-}"
+    local rzlb_dry_run="${2:-}"
+    local rzlb_dry_prefix=""
+    if [ "$rzlb_dry_run" = "dry-run" ]; then
+        rzlb_dry_prefix="[DRY-RUN] "
     fi
 
+    not_empty "zbackup config name" "$rzlb_config"
+
+    log_message "${rzlb_dry_prefix}run_zfs_local_backup ${rzlb_config}"
+
+    log_setting "zbackup config" "$rzlb_config"
+
+    # Check if zbackup command exists
+    if ! command -v zbackup &>/dev/null; then
+        report "$MISSING_FILE" "zbackup command not found in PATH"
+        return "$MISSING_FILE"
+    fi
+
+    # Dry-run mode: show what would be done
+    if [ "$rzlb_dry_run" = "dry-run" ]; then
+        log_message "[DRY-RUN] would run: zbackup --config ${rzlb_config}"
+        return 0
+    fi
+
+    # Run zbackup - it handles drive detection and pool import/export
+    zbackup --config "$rzlb_config" || {
+        local rc=$?
+        report "$rc" "zbackup failed for ${rzlb_config}"
+        return "$rc"
+    }
+
+    log_message "zbackup completed for ${rzlb_config}"
     return 0
 }
 
-cleanup_functions+=('cleanup_local_backup')
+function run_all_zfs_local_backups {
+    # Run all configured local ZFS backups
+    # Iterates through ZFS_BACKUP_TARGETS array
+    #
+    # Arguments:
+    #   $1 - (optional) "dry-run" to preview without making changes
+    #
+    # Format of ZFS_BACKUP_TARGETS entries:
+    #   Config names matching files in backup-configs/ - zbackup handles the rest
 
-function cleanup_local_backup {
-    # Clean up after local backup
-    # Make sure rsync is done
-
-    ######################################
-    # If using the report function here, #
-    # make sure it has NO THIRD ARGUMENT #
-    # or there will be an infinite loop! #
-    # This function may be used to       #
-    # handle trapped signals             #
-    ######################################
-
-    ##########################################################################
-    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
-    ##########################################################################
-
-    >&2 echo "${STAMP}: cleanup_local_backup"
-
-    killall rsync || report $? "kill the rsync processes"
-    slow rsync
-
-    # If the local backup is mounted, unmount
-    if grep -qs "/mnt/${BACKUP_NAME}" /proc/mounts; then
-        sudo umount /dev/mapper/${BACKUP_NAME} ||\
-            report $? "unmounting backup"
+    local razlb_dry_run="${1:-}"
+    local razlb_dry_prefix=""
+    if [ "$razlb_dry_run" = "dry-run" ]; then
+        razlb_dry_prefix="[DRY-RUN] "
     fi
 
-    # Do not leave the encrypted backup unlocked
-    if sudo cryptsetup status ${BACKUP_NAME} 1> /dev/null; then
-        sudo cryptsetup close ${BACKUP_NAME} ||\
-            report $? "locking backup drive"
+    log_message "${razlb_dry_prefix}run_all_zfs_local_backups"
+
+    if [ ${#ZFS_BACKUP_TARGETS[@]} -eq 0 ]; then
+        log_message "${razlb_dry_prefix}no ZFS backup targets configured"
+        return 0
     fi
 
-    # If the local backup is mounted, unmount
-    if grep -qs "/mnt/${EXTRA_BACKUP_NAME}" /proc/mounts; then
-        sudo umount /dev/mapper/${EXTRA_BACKUP_NAME} ||\
-            report $? "unmounting extra backup"
-    fi
+    local razlb_failed=0
 
-    # Do not leave the encrypted backup unlocked
-    if sudo cryptsetup status ${EXTRA_BACKUP_NAME} 1> /dev/null; then
-        sudo cryptsetup close ${EXTRA_BACKUP_NAME} ||\
-            report $? "locking extra backup drive"
-    fi
+    for config in "${ZFS_BACKUP_TARGETS[@]}"; do
+        log_message "processing ZFS backup target: ${config}"
 
-    return 0
-}
-
-function run_remote_backup {
-    # Remote backup skipping sensitive data
-
-    ##########################################################################
-    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
-    ##########################################################################
-
-    >&2 echo "${STAMP}: run_remote_backup"
-
-    local src=$1
-    local dst=$2
-    local src_folder_name="$(basename $src)"
-    local backup_destination="${dst}/${src_folder_name}"
-
-    log_setting "directory to backup" "$src"
-    log_setting "address and path of remote backups" "$dst"
-    check_exists "${src}/.exclude_remote"
-
-    for f in ${SECRET_FOLDERS[@]}; do
-        if [ -d "${src}/$f" ]; then
-            check_contains "${src}/.exclude_remote" "$f"
+        if ! run_zfs_local_backup "$config" "$razlb_dry_run"; then
+            razlb_failed=$((razlb_failed + 1))
         fi
     done
 
-    sudo rsync  -avz \
-                --links \
-                --progress \
-                --delete \
-                --delete-excluded \
-                --exclude-from="${src}/.exclude_remote" \
-                "${src}/" \
-                "${backup_destination}/" ||\
-            report "$?" "remote backup via rsync"
+    if [ "$razlb_failed" -gt 0 ]; then
+        log_message "${razlb_failed} ZFS backup(s) failed"
+    fi
 
+    return 0  # Don't fail the whole run for individual failures
+}
+
+# =============================================================================
+#   SYNCOID REPLICATION FUNCTIONS
+# =============================================================================
+
+function run_syncoid_replication {
+    # Run syncoid replication to a remote host
+    #
+    # Arguments:
+    #   $1 - Source dataset (e.g., "pool/data")
+    #   $2 - Destination in user@host:dataset format
+    #   $3 - (optional) "dry-run" to preview without making changes
+    #
+    # Returns:
+    #   0 - Replication completed successfully
+    #   Non-zero - Replication failed or skipped
+
+    local rsr_source="${1:-}"
+    local rsr_dest="${2:-}"
+    local rsr_dry_run="${3:-}"
+    local rsr_dry_prefix=""
+    if [ "$rsr_dry_run" = "dry-run" ]; then
+        rsr_dry_prefix="[DRY-RUN] "
+    fi
+
+    not_empty "syncoid source" "$rsr_source"
+    not_empty "syncoid destination" "$rsr_dest"
+
+    log_message "${rsr_dry_prefix}run_syncoid_replication"
+
+    log_setting "syncoid source" "$rsr_source"
+    log_setting "syncoid destination" "$rsr_dest"
+
+    # Check if syncoid command exists
+    if ! command -v syncoid &>/dev/null; then
+        report "$MISSING_FILE" "syncoid command not found (install sanoid package)"
+        return "$MISSING_FILE"
+    fi
+
+    # Parse destination to extract host
+    local rsr_host="${rsr_dest%%:*}"
+
+    # Check if host is reachable
+    if ! check_host_reachable "$rsr_host"; then
+        log_message "skipping replication - host ${rsr_host} not reachable"
+        return 0  # Not an error, just skipped
+    fi
+
+    # Dry-run mode: show what would be done (syncoid has no dry-run option)
+    if [ "$rsr_dry_run" = "dry-run" ]; then
+        log_message "[DRY-RUN] would run: syncoid ${rsr_source} ${rsr_dest}"
+        return 0
+    fi
+
+    # Run syncoid (uses sudo on both local and remote for ZFS operations)
+    # --quiet suppresses progress bars (which are imprecise for small sends)
+    syncoid --quiet "$rsr_source" "$rsr_dest" || {
+        local rc=$?
+        report "$rc" "syncoid replication failed: ${rsr_source} -> ${rsr_dest}"
+        return "$rc"
+    }
+
+    log_message "syncoid completed: ${rsr_source} -> ${rsr_dest}"
     return 0
 }
 
-cleanup_functions+=('cleanup_remote_backup')
+function run_all_syncoid_backups {
+    # Run all configured syncoid replications
+    # Iterates through SYNCOID_TARGETS array
+    #
+    # Arguments:
+    #   $1 - (optional) "dry-run" to preview without making changes
+    #
+    # Uses settings:
+    #   SYNCOID_REMOTE_HOST - remote host (SSH config entry)
+    #   SYNCOID_REMOTE_POOL - destination pool on remote
+    #   SYNCOID_TARGETS     - array of source datasets to replicate
 
-function cleanup_remote_backup {
-    # Clean up after remote backup
-    # Make sure rsync is done
+    local rasb_dry_run="${1:-}"
+    local rasb_dry_prefix=""
+    if [ "$rasb_dry_run" = "dry-run" ]; then
+        rasb_dry_prefix="[DRY-RUN] "
+    fi
 
-    ######################################
-    # If using the report function here, #
-    # make sure it has NO THIRD ARGUMENT #
-    # or there will be an infinite loop! #
-    # This function may be used to       #
-    # handle trapped signals             #
-    ######################################
+    log_message "${rasb_dry_prefix}run_all_syncoid_backups"
 
-    >&2 echo "${STAMP}: cleanup_remote_backup"
+    if [ ${#SYNCOID_TARGETS[@]} -eq 0 ]; then
+        log_message "${rasb_dry_prefix}no syncoid targets configured"
+        return 0
+    fi
 
-    killall rsync || report "$?" "kill the rsync processes"
-    slow rsync
-    return 0
-}
+    if [ -z "${SYNCOID_REMOTE_HOST:-}" ]; then
+        log_message "SYNCOID_REMOTE_HOST not configured"
+        return 1
+    fi
 
-function all_remote_backups {
-    # Run all desired remote backups to a
-    # a given destination. This does not
-    # include archive to object storage.
+    if [ -z "${SYNCOID_REMOTE_POOL:-}" ]; then
+        log_message "SYNCOID_REMOTE_POOL not configured"
+        return 1
+    fi
 
-    ##########################################################################
-    # USES GLOBAL VARIABLES THAT SHOULD BE SET IN .bashrc OR .zshrc OR . . . #
-    ##########################################################################
+    log_setting "syncoid remote host" "$SYNCOID_REMOTE_HOST"
+    log_setting "syncoid remote pool" "$SYNCOID_REMOTE_POOL"
 
-    >&2 echo "${STAMP}: all_remote_backups"
+    local rasb_failed=0
 
-    local destination=$1
+    for source in "${SYNCOID_TARGETS[@]}"; do
+        # Construct destination: host:pool/source_path
+        local dest="${SYNCOID_REMOTE_HOST}:${SYNCOID_REMOTE_POOL}/${source}"
 
-    log_setting "destination for a $(hostnamectl hostname) backup set" \
-                "${destination}"
+        log_message "processing syncoid target: ${source} -> ${dest}"
 
-    # Make sure we're excluding sensitive files
-    # from networked backups
-    for f in ${SECRET_FOLDERS[@]}; do
-        check_contains "${HOME}/.exclude_remote" "$f"
+        if ! run_syncoid_replication "$source" "$dest" "$rasb_dry_run"; then
+            rasb_failed=$((rasb_failed + 1))
+        fi
     done
 
-    # Run remote backups over the wired connection only
-    if check_intfc "$MAIN_WIRED"; then
-        if ! check_intfc "$MAIN_WIRELESS"; then
+    if [ "$rasb_failed" -gt 0 ]; then
+        log_message "${rasb_failed} syncoid replication(s) failed"
+    fi
 
-            run_remote_backup "${HOME}" "${destination}"
+    return 0  # Don't fail the whole run for individual failures
+}
 
-            run_remote_backup '/mnt/data/archive' "${destination}"
+# =============================================================================
+#   ROOT FILESYSTEM BACKUP
+# =============================================================================
 
-            if [ -n "${MONTH}" ]; then
-                if [ -d "/mnt/data/${MONTH}" ]; then
-                    run_remote_backup "/mnt/data/${MONTH}" "${destination}"
-                fi
-            fi
+function prepare_root_mount {
+    # Ensure /mnt/root is available by importing ROOT_BACKUP_POOL if needed
+    # ROOT_BACKUP_DATASET is mounted at /mnt/root
+    #
+    # Requires (from settings.sh / env.sh):
+    #   ROOT_BACKUP_POOL     - pool name to import
+    #   ROOT_BACKUP_CONFIG   - config file name in backup-configs/ for drive ID
+    #   ROOT_BACKUP_DATASET  - full dataset path to mount at /mnt/root
+    #
+    # Returns:
+    #   0 - /mnt/root is mounted (or was successfully mounted)
+    #   1 - Could not mount /mnt/root or root backup not configured
 
-            run_remote_backup '/mnt/data/wire' "${destination}"
+    # Check that root backup is configured
+    if [ -z "${ROOT_BACKUP_POOL:-}" ] || [ -z "${ROOT_BACKUP_DATASET:-}" ]; then
+        log_message "root backup not configured (ROOT_BACKUP_POOL/ROOT_BACKUP_DATASET empty)"
+        return 1
+    fi
 
+    # Already mounted - nothing to do
+    if mountpoint -q /mnt/root 2>/dev/null; then
+        return 0
+    fi
+
+    # Check if root backup pool is imported
+    if ! zpool list "$ROOT_BACKUP_POOL" >/dev/null 2>&1; then
+        # Find the config to get drive ID
+        local prm_config_file="${BACKUP_CONFIGS_DIR}/${ROOT_BACKUP_CONFIG:-${ROOT_BACKUP_POOL}}.conf"
+
+        if [ ! -f "$prm_config_file" ]; then
+            log_message "${ROOT_BACKUP_POOL} config not found, cannot mount /mnt/root"
+            return 1
+        fi
+
+        # Read drive ID from config (avoid sourcing to not clobber variables)
+        local prm_drive_id
+        prm_drive_id=$(grep '^BACKUP_DRIVE_ID=' "$prm_config_file" | cut -d'"' -f2)
+
+        if [ -z "$prm_drive_id" ] || [ ! -e "/dev/disk/by-id/${prm_drive_id}" ]; then
+            log_message "${ROOT_BACKUP_POOL} drive not connected, cannot mount /mnt/root"
+            return 1
+        fi
+
+        log_message "importing ${ROOT_BACKUP_POOL} pool for /mnt/root..."
+        if ! sudo zpool import -d /dev/disk/by-id "$ROOT_BACKUP_POOL"; then
+            log_message "failed to import ${ROOT_BACKUP_POOL} pool"
+            return 1
         fi
     fi
+
+    # Load encryption keys if needed
+    local prm_keystatus
+    prm_keystatus=$(sudo zfs get -H -o value keystatus "$ROOT_BACKUP_POOL" 2>/dev/null)
+    if [ "$prm_keystatus" = "unavailable" ]; then
+        log_message "encryption key required for ${ROOT_BACKUP_POOL} pool"
+        if ! sudo zfs load-key "$ROOT_BACKUP_POOL"; then
+            log_message "failed to load encryption key for ${ROOT_BACKUP_POOL}"
+            return 1
+        fi
+    fi
+
+    # Mount /mnt/root
+    if ! mountpoint -q /mnt/root 2>/dev/null; then
+        sudo zfs mount "$ROOT_BACKUP_DATASET" 2>/dev/null
+    fi
+
+    if mountpoint -q /mnt/root 2>/dev/null; then
+        log_message "/mnt/root is ready"
+        return 0
+    fi
+
+    log_message "failed to mount /mnt/root"
+    return 1
+}
+
+function run_root_backup {
+    # Run root filesystem backup using rbackup script
+    # Backs up root filesystem to /mnt/root on ZFS
+    #
+    # Arguments:
+    #   $1 - (optional) "dry-run" to preview without making changes
+    #
+    # Returns:
+    #   0 - Backup completed successfully
+    #   Non-zero - Backup failed or skipped
+
+    local rrb_dry_run="${1:-}"
+    local rrb_dry_prefix=""
+    if [ "$rrb_dry_run" = "dry-run" ]; then
+        rrb_dry_prefix="[DRY-RUN] "
+    fi
+
+    log_message "${rrb_dry_prefix}run_root_backup"
+
+    # Check if rbackup command exists
+    if ! command -v rbackup &>/dev/null; then
+        report "$MISSING_FILE" "rbackup command not found in PATH"
+        return "$MISSING_FILE"
+    fi
+
+    # Check if /mnt/root is mounted
+    if ! mountpoint -q /mnt/root 2>/dev/null; then
+        log_message "/mnt/root is not mounted, skipping root backup"
+        return 0  # Not an error, just skipped
+    fi
+
+    # Dry-run mode: show what would be done
+    if [ "$rrb_dry_run" = "dry-run" ]; then
+        log_message "[DRY-RUN] would run: rbackup"
+        return 0
+    fi
+
+    # Run rbackup
+    rbackup || {
+        local rc=$?
+        # Exit code 23 = partial transfer (some files couldn't be copied)
+        # This is common for locked files during backup - treat as warning
+        if [ "$rc" -eq 23 ]; then
+            log_message "rbackup partial transfer (exit 23) - some files may have been skipped"
+            return 0
+        fi
+        report "$rc" "rbackup failed"
+        return "$rc"
+    }
+
+    log_message "rbackup completed"
+    return 0
+}
+
+# =============================================================================
+#   MAIN BACKUP ENTRY POINT
+# =============================================================================
+
+function run_all_backups {
+    # Run all backup types
+    # Failures in one backup type don't prevent others from running
+    #
+    # Arguments:
+    #   $1 - (optional) "dry-run" to preview without making changes
+    #
+    # Order:
+    #   1. Root filesystem backup (rbackup) - runs first while backup pool is mounted
+    #   2. Local ZFS backups (zbackup) - exports pools after completion
+    #   3. Remote syncoid replication
+
+    local rab_dry_run="${1:-}"
+
+    local rab_dry_prefix=""
+    if [ "$rab_dry_run" = "dry-run" ]; then
+        rab_dry_prefix="[DRY-RUN] "
+    fi
+
+    log_message "${rab_dry_prefix}run_all_backups"
+
+    local rab_errors=0
+
+    # 1. Root filesystem backup (before zbackup exports backup pools)
+    log_message "${rab_dry_prefix}=== Root backup ==="
+    if ! run_root_backup "$rab_dry_run"; then
+        rab_errors=$((rab_errors + 1))
+    fi
+
+    # 2. Local ZFS backups
+    log_message "${rab_dry_prefix}=== Local ZFS backups ==="
+    if ! run_all_zfs_local_backups "$rab_dry_run"; then
+        rab_errors=$((rab_errors + 1))
+    fi
+
+    # 3. Remote syncoid replication
+    log_message "${rab_dry_prefix}=== Syncoid replication ==="
+    if ! run_all_syncoid_backups "$rab_dry_run"; then
+        rab_errors=$((rab_errors + 1))
+    fi
+
+    if [ "$rab_errors" -gt 0 ]; then
+        log_message "${rab_dry_prefix}backup completed with ${rab_errors} error(s)"
+    else
+        log_message "${rab_dry_prefix}backup checks complete"
+    fi
+
+    return 0
 }

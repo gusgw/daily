@@ -1,3 +1,4 @@
+#!/bin/bash
 ##  Run system update and package maintenance
 
 ##  Settings
@@ -24,69 +25,92 @@
 function run_package_maintenance {
     not_empty "date stamp" "$STAMP"
 
-    >&2 echo "${STAMP}: run_package_maintenance"
+    log_message "run_package_maintenance"
 
     # Check for missing files
+    log_message "checking for missing files..."
     sudo pacman -Qk 2> /dev/null 1>\
             "${STAMP}-missing_system_file_list.txt" ||\
         report $? "checking for missing files"
 
     # Checking for package changes
+    log_message "checking for altered files..."
     sudo pacman -Qkk 2> /dev/null 1>\
             "${STAMP}-altered_system_file_list.txt" ||\
         report $? "checking for altered files"
 
     # Run regular package related tasks
+    log_message "cleaning package cache..."
     sudo pacman -Scc --noconfirm || report "$?" "cleaning package cache"
+    log_message "updating system..."
     sudo pacman -Syu --noconfirm || report "$?" "updating system"
+
+    # Update AUR packages
+    log_message "updating AUR packages..."
+    if command -v yay &>/dev/null; then
+        yay -Sua --noconfirm || report "$?" "updating AUR packages"
+    else
+        log_message "yay not installed, skipping AUR updates"
+    fi
 
     # Some pacman work taken from the Arch wiki:
     # https://wiki.archlinux.org/title/Pacman/Tips_and_tricks
+    log_message "checking for orphan packages..."
     if [ "$(sudo pacman -Qtdq | wc -l)" -gt 0 ]; then
-        sudo pacman -Qtdq | sudo pacman -Rns - ||\
+        sudo pacman -Qtdq | sudo pacman -Rns --noconfirm - ||\
             report "$?" "remove orphan packages"
     fi
     if [ "$(sudo pacman -Qqd | wc -l)" -gt 0 ]; then
         sudo pacman -Qqd |\
             sudo pacman -Rsu --print - 1>\
-                        ${STAMP}-possible_orphan_list.txt ||\
+                        "${STAMP}"-possible_orphan_list.txt ||\
                 report "$?" "finding packages that might not be needed"
     fi
 
     # Record disk space used by packages
-    sudo expac -H M '%m\t%n' 1> ${STAMP}-package_sizes.txt ||\
+    log_message "recording package sizes..."
+    sudo expac -H M '%m\t%n' 1> "${STAMP}"-package_sizes.txt ||\
         report "$?" "finding disk space used by each package"
 
     # Try a method of listing explicitly installed packages.
     # Note recent update in the comments.
     # https://unix.stackexchange.com/questions/409895/
     #         pacman-get-list-of-packages-installed-by-user
-    sudo pacman -Qqett 1> ${STAMP}-package_list.txt ||\
+    log_message "listing explicitly installed packages..."
+    sudo pacman -Qqett 1> "${STAMP}"-package_list.txt ||\
         report "$?" "create list of explicitly installed package"
 
     # Get optional dependencies
     # https://wiki.archlinux.org/title/Pacman/Tips_and_tricks
+    log_message "listing optional dependencies..."
     comm -13 <(pacman -Qqdt | sort) <(pacman -Qqdtt | sort) >\
-        ${STAMP}-optional_list.txt
+        "${STAMP}"-optional_list.txt
 
     # Get a list of AUR and other foreign packages
     # https://wiki.archlinux.org/title/Pacman/Tips_and_tricks
-    pacman -Qqem > ${STAMP}-foreign_list.txt
+    log_message "listing foreign packages..."
+    pacman -Qqem > "${STAMP}"-foreign_list.txt
 
     # Check for unowned files
+    log_message "checking for unowned files..."
     sudo pacreport --unowned-files 1>\
-            ${STAMP}-unowned_list.txt ||\
+            "${STAMP}"-unowned_list.txt ||\
         report "$?" "finding unowned files"
 
     # Archive the pacman database
+    log_message "archiving pacman database..."
     wd=$(pwd)
-    cd /var/lib/pacman/local &&\
-            sudo tar -cjf "${wd}/${STAMP}-pacman_database.tar.bz2" . ||\
-        report "$?" "saving pacman database"
-    cd ${wd} || report $? "return to working directory"
+    if cd /var/lib/pacman/local; then
+        sudo tar -cjf "${wd}/${STAMP}-pacman_database.tar.bz2" . ||\
+            report "$?" "saving pacman database"
+    else
+        report "$?" "changing to pacman database directory"
+    fi
+    cd "${wd}" || report $? "return to working directory"
     sudo chown "${USER}:${USER}" "${STAMP}-pacman_database.tar.bz2" ||\
         report "$?" "changing owner and group of pacman database archive"
 
+    log_message "package maintenance complete"
     return 0
 }
 
@@ -104,16 +128,16 @@ function cleanup_package_maintenance {
     # handle trapped signals             #
     ######################################
 
-    >&2 echo "${STAMP}: cleanup_package_maintenance"
+    log_message "cleanup_package_maintenance"
 
-    rm -f ${STAMP}-missing_system_file_list.txt
-    rm -f ${STAMP}-altered_system_file_list.txt
-    rm -f ${STAMP}-possible_orphan_list.txt
-    rm -f ${STAMP}-package_sizes.txt
-    rm -f ${STAMP}-package_list.txt
-    rm -f ${STAMP}-optional_list.txt
-    rm -f ${STAMP}-foreign_list.txt
-    rm -f ${STAMP}-unowned_list.txt
-    rm -f ${STAMP}-pacman_database.tar.bz2
+    rm -f "${STAMP}"-missing_system_file_list.txt
+    rm -f "${STAMP}"-altered_system_file_list.txt
+    rm -f "${STAMP}"-possible_orphan_list.txt
+    rm -f "${STAMP}"-package_sizes.txt
+    rm -f "${STAMP}"-package_list.txt
+    rm -f "${STAMP}"-optional_list.txt
+    rm -f "${STAMP}"-foreign_list.txt
+    rm -f "${STAMP}"-unowned_list.txt
+    rm -f "${STAMP}"-pacman_database.tar.bz2
     return 0
 }
