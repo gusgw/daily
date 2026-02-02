@@ -1,0 +1,16 @@
+#!/bin/bash
+# Example configuration for backing up to an external USB hard drive
+# Copy this file to <name>.conf and adjust values for your setup.
+
+BACKUP_POOL="mypool"
+BACKUP_PATH="sourcepool"
+SOURCE_DATASETS=(
+    "sourcepool/user/data"
+    "sourcepool/user/cloud"
+    "sourcepool/user/encrypted"
+    "sourcepool/user/local"
+    "sourcepool/user/src"
+)
+# Find your drive ID with: ls -la /dev/disk/by-id/
+BACKUP_DRIVE_ID="usb-YOUR_DRIVE_ID_HERE-0:0"
+LOG_FILE="/var/log/zfs-backup-mypool.log"

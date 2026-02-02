@@ -1,0 +1,17 @@
+#!/bin/bash
+# Example configuration for backing up to a remote ZFS pool on an external drive
+# This is for drives that are normally connected to another machine.
+# Copy this file to <name>.conf and adjust values for your setup.
+
+BACKUP_POOL="remotepool"
+BACKUP_PATH="remotesource"
+SOURCE_DATASETS=(
+    "remotesource/data"
+    "remotesource/user/cloud"
+    "remotesource/user/encrypted"
+    "remotesource/user/local"
+    "remotesource/user/src"
+)
+# Find your drive ID with: ls -la /dev/disk/by-id/
+BACKUP_DRIVE_ID="usb-YOUR_DRIVE_ID_HERE-0:0"
+LOG_FILE="/var/log/zfs-backup-remotepool.log"

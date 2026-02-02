@@ -1,0 +1,15 @@
+#!/bin/bash
+# Example configuration for backing up to a USB flash drive
+# Copy this file to <name>.conf and adjust values for your setup.
+
+BACKUP_POOL="myflash"
+BACKUP_PATH="sourcepool"
+SOURCE_DATASETS=(
+    "sourcepool/user/cloud"
+    "sourcepool/user/encrypted"
+    "sourcepool/user/local"
+    "sourcepool/user/src"
+)
+# Find your drive ID with: ls -la /dev/disk/by-id/
+BACKUP_DRIVE_ID="usb-YOUR_FLASH_DRIVE_ID_HERE-0:0"
+LOG_FILE="/var/log/zfs-backup-myflash.log"
