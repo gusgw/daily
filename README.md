@@ -1,215 +1,433 @@
-# Daily tasks
+# Daily Maintenance System
 
-This script runs shell functions for routine maintenance
-tasks on a Linux workstation. They are particular
-to my set up and I do not know if they are useful for
-others.
+Automated Linux workstation maintenance for an Arch Linux system with ZFS,
+WireGuard VPN, and cloud synchronization. Built on the BUMP (Bash Utility
+Management Package) library for standardized error handling.
 
-## Tasks performed
+## Table of Contents
 
-The following task descriptions are based on
-the default configuration.
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Execution Flow](#execution-flow)
+- [Log Files](#log-files)
+- [Sanoid Snapshot Management](#sanoid-snapshot-management)
+- [Security](#security)
+- [Troubleshooting](#troubleshooting)
+- [Testing](#testing)
+- [Related Documentation](#related-documentation)
 
-1.  *Network check:*
+## Overview
 
-    Expects that a VPN should be running, and
-    will try to start one if needed.  Note that arguments passed to
-    network_check specify network interfaces and default VPN.
+`daily.sh` runs a sequence of maintenance tasks:
 
-    -   `firewall_active`
+1. Verify firewall and network connectivity
+2. Ensure WireGuard VPN is connected
+3. Check system health (ZFS, services, journal, temperatures)
+4. Update packages and clean caches
+5. Run ZFS backups to local external drives
+6. Replicate ZFS datasets to a remote host via syncoid
+7. Back up root filesystem via rsync
+8. Synchronize directories to Google Drive via rclone bisync
 
-    -   `ping_router`
+The script uses file locking to prevent concurrent execution and handles
+signals for graceful shutdown. Individual failures (e.g., a disconnected
+backup drive) are logged but do not prevent subsequent tasks from running.
 
-    -   `ping_check`
+## Architecture
 
-    -   `check_intfc`
+```
+daily.sh                    Main orchestrator
+├── env.sh                  Machine-specific environment variables (gitignored)
+├── env.sh.example          Template for env.sh
+├── bump/                   BUMP utility library (git submodule)
+│   ├── bump.sh             Logging, validation, cleanup, signal handling
+│   └── return_codes.sh     Standardized exit codes (60-119)
+├── settings.sh             All configuration: targets, thresholds, arrays
+├── network.sh              Firewall, interface selection, WireGuard VPN, DNS
+├── system.sh               Systemd units, ZFS health, scrub, journal, thermal
+├── package.sh              pacman updates, cache cleaning, AUR, database archive
+├── backup.sh               zbackup (local ZFS), syncoid (remote), rbackup (root)
+├── zbackup.sh              ZFS send/receive to external backup drives
+├── rbackup.sh              Root filesystem rsync to /mnt/root
+├── backup-configs/         Configuration files for zbackup (gitignored)
+│   └── *.conf.example      Example config templates
+├── sensitive.sh            Sensitive file detection, rclone exclusion generation
+├── cloud.sh                rclone bisync/sync/copy with exclusions
+├── sanoid/                 Sanoid configs with install script
+│   ├── sanoid.conf.example         Main pool snapshot policy template
+│   ├── sanoid-external.conf.example  External pool snapshot policy template
+│   └── install.sh          Installs configs to /etc/sanoid/
+├── logrotate/              Logrotate configs with install script
+│   ├── zfs-backup          Rotation for /var/log/zfs-backup-*.log
+│   ├── daily-maintenance   Rotation for /var/log/daily-maintenance.log
+│   └── install.sh          Installs configs to /etc/logrotate.d/
+└── tests/                  Bats test suite
+```
 
-    -   `check_single_tunnel`
+## Requirements
 
-    -   `start_tunnel`
+### System
 
-2.  *System check:* `system_check`, `make_active`
+- Arch Linux (or compatible)
+- Bash 4.0+
+- systemd
+- ZFS
+- sudo access
 
-    This just checks that units listed in `${UNITS_TO_CHECK[@]}`
-    are active, and if not attempts to start them,
-    usually `syncthing` and `sshd`.
-    Exit cleanly if these units have failed or are not running.
+### Packages
 
-3.  *Package maintenance and system update:* `_package_maintenance`
+```bash
+sudo pacman -S ufw wireguard-tools zfs-utils sanoid rsync rclone lm_sensors
+```
 
-    Several update and maintenance tasks mostly
-    taken from the Arch Wiki.
-    Output files are created in the user's home folder
-    but deleted on clean up. It's assumed that they are
-    usually saved somewhere before that cleanup.
-    Running system updates without confirmation is also
-    something that should be done with caution, though I
-    find it is not a problem perhaps because I do check the
-    Arch website for news and advice fairly often.
+Optional: `yay` for AUR updates, `tlp` and `thinkfan` for thermal management.
 
+### Custom Scripts
 
-4.  *Local backup:* `_local_backup`
+These must be in PATH:
 
-    Backup everything not in `~/.exclude_local` to
-    a key drive or similar. Controlled using
-    global settings.
-    Set a key file to decrypt the backup disk in the
-    environment variable `KEY_FILE`.
-    Make sure the backup device is set in the environment
-    variable `BACKUP_DISK`.
-    Make sure the backup name is set in the environment
-    variable `BACKUP_NAME`. This will be used as the device
-    name for the unlocked drive.
-    Files to be excluded from the local backup are listed
-    in `~/.exclude_local`, which is passed to `rsync`.
+- **`vpn`** -- WireGuard management (`vpn up` / `vpn down`)
 
+`zbackup` and `rbackup` are included in this repository. Create symlinks
+so they are available in PATH:
 
-5.  *Archive ready for S3:* `_archive`
+```bash
+ln -sf ../../src/daily/zbackup.sh ~/opt/bin/zbackup
+ln -sf ../../src/daily/rbackup.sh ~/opt/bin/rbackup
+```
 
-    Remote archives are copies files and folders to S3
-    style object storage, as opposed to disk storage.
-    Folders archived are encrypted and sent via `rclone`.
-    If the encrypted folder is mounted,
-    make sure there is no harm in sending it
-    to S3. If the test passes, unmount
-    and clone to S3. This is done for a general
-    archive as well as monthly sets.
-    File lists are saved.
+## Installation
 
-6.  *Prepare shared folder:* `_shared_preparation`
+1. Clone and initialize:
+```bash
+git clone <repository-url>
+cd daily
+git submodule update --init
+chmod +x daily.sh zbackup.sh rbackup.sh
+```
 
-    The shared preparation routine sets up a copy of
-    the folder tree with sensitive or secret files and
-    folders removed so that it can be uploaded to
-    a cloud file sharing system. The location for staging
-    folders ready for upload is set as `$SHARED_STAGING`,
-    an environment variable set in `.zshrc` or similar.
-    Setup a folder full of usefully shared files,
-    with anything sensitive automatically removed.
+2. Create machine-specific configuration:
+```bash
+cp env.sh.example env.sh
+# Edit env.sh with your interface names, pool names, backup targets, etc.
+```
 
+3. Create backup configuration files:
+```bash
+cd backup-configs
+cp example-external-drive.conf.example mypool.conf
+# Edit mypool.conf with your pool name, datasets, and drive ID
+```
 
-### Tasks disabled
+4. Create sanoid configuration:
+```bash
+cd sanoid
+cp sanoid.conf.example sanoid.conf
+# Edit sanoid.conf with your pool and dataset names
+sudo ./install.sh
+```
 
-7.  *Remote backup:* `_remote_backup`, `all_remote_backups`
+5. Create symlinks for backup scripts:
+```bash
+ln -sf ../../src/daily/zbackup.sh ~/opt/bin/zbackup
+ln -sf ../../src/daily/rbackup.sh ~/opt/bin/rbackup
+```
 
-    Send everything not in `~/.exclude_remote`
-    to a remote destination after making sure
-    secret folders are in the excludes.
-    Paths to remote backup should be `$REMOTE_BACKUP` and
-    `$REMOTE_BACKUP_EXTRA`. The remote backup routine is
-    applied to the home folder, and so includes a check that
-    `${SECRET_FOLDERS[@]}` are included in the
-    `~/.exclude_remote` list, which is passed to `rsync`.
-    Usual remote backup destinations are set
-    globally. These routines copy to machines administered by me.
-    Remote backups are run over MAIN_WIRED but not MAIN_WIRELESS.
+6. Install logrotate configuration:
+```bash
+cd logrotate && sudo ./install.sh
+```
 
+7. Configure sudo access (see [Sudo Configuration](#sudo-configuration) below).
 
-## Variables that control operation
+## Configuration
 
-### Environment variables
+Machine-specific values go in `env.sh` (see `env.sh.example` for the full list).
+Policy settings and thresholds are in `settings.sh`.
 
-Environment variables that should be set in `.zshrc` or
-`.bashrc` or similar are listed here. These are used
-for settings that are used for maintenance but need
-to be available for the whole login session.
+### env.sh Variables
 
-A local backup is configured using
-the variables:
+```bash
+# Network interfaces (find yours with: ip link show)
+export MAIN_WIRED="enp0s25"
+export MAIN_WIRELESS="wlan0"
 
-* `KEY_FILE`
-* `BACKUP_DISK`
-* `BACKUP_NAME`
-* `EXTRA_BACKUP_DISK`
-* `EXTRA_BACKUP_NAME`
+# VPN DNS server
+export VPN_DNS="10.0.0.1"
 
-`rsync` destinations for remote backup:
+# ZFS pool name
+export ZFS_POOL="tank"
 
-* `REMOTE_BACKUP`
-* `REMOTE_BACKUP_EXTRA`
+# Syncoid remote replication
+export SYNCOID_REMOTE_HOST="remote-host"
+export SYNCOID_REMOTE_POOL="remote-pool"
+export SYNCOID_DATASETS="user/src user/cloud"
 
-A local folder for staging folders ready to share
-via a cloud storage service:
+# ZFS backup target config names (space-delimited)
+export ZFS_BACKUP_TARGETS="mypool"
 
-* `SHARED_STAGING`
+# Cloud sync
+export CLOUD_SYNCS="${HOME}/cloud/:google:"
 
-Netowrk interfaces:
+# Root filesystem backup
+export ROOT_BACKUP_POOL="mypool"
+export ROOT_BACKUP_CONFIG="mypool"
+export ROOT_BACKUP_DATASET="mypool/source/root"
+```
 
-* `MAIN_WIRELESS`
-* `MAIN_WIRED`
-* `MAIN_TUNNEL`
+### settings.sh Thresholds
 
-Default VPN configuration file:
+```bash
+WAIT=5.0              # Seconds between retries
+ATTEMPTS=10           # Retry count for network checks
+SSH_TIMEOUT=5         # SSH connection timeout (seconds)
+WIREGUARD_INTERFACE="wg0"
+SCRUB_WARN_DAYS=30
+POOL_CAPACITY_WARN=80
+JOURNAL_WARN_SIZE="1G"
+TEMP_WARN_THRESHOLD=85
+TEMP_CRIT_THRESHOLD=95
+```
 
-* `DEFAULT_VPN`
+### Security Exclusions
 
-### Script global variables
+```bash
+SECRET_FOLDERS=( '.ssh' '.gnupg' '.cert' '.pki' '.password-store' )
+SECRET_FILES=( "*.asc" "*.key" "*.pem" "id_rsa*" "id_dsa*" "id_ed25519*" )
+SENSITIVE_FOLDERS=( '.git' '.stfolder' '.stversions' '.local' 'venv' )
+```
 
-Return codes are in `return_codes.sh`.
+These patterns are automatically excluded from cloud sync operations.
 
-Limits on parallel operation, delay length,
-important system units, and sensitive or secret files and folders 
-are sourced from `settings.sh`,
+### Sudo Configuration
 
-## Signals
+Add to `/etc/sudoers` via `visudo`:
 
-The following signals are caught, at which time the `cleanup`
-routine is called so that no mess is left behind when the
-script exits.
+```sudoers
+username ALL=(ALL) NOPASSWD: /usr/bin/ufw
+username ALL=(ALL) NOPASSWD: /usr/bin/wg
+username ALL=(ALL) NOPASSWD: /usr/bin/zpool
+username ALL=(ALL) NOPASSWD: /usr/bin/zfs
+username ALL=(ALL) NOPASSWD: /usr/bin/systemctl
+username ALL=(ALL) NOPASSWD: /usr/bin/rfkill
+username ALL=(ALL) NOPASSWD: /usr/bin/sanoid
+username ALL=(ALL) NOPASSWD: /usr/bin/journalctl
+username ALL=(ALL) NOPASSWD: /usr/bin/pacman
+username ALL=(ALL) NOPASSWD: /usr/bin/find
+```
 
-* `SIGHUP` or signal 1
+## Usage
 
-* `SIGINT` or signal 2
+### Run manually
 
-* `SIGQUIT` or signal 3
+```bash
+./daily.sh
+```
 
-* `SIGABRT` or signal 6
+### Dry-run mode
 
-* `SIGTERM` or signal 15
+Preview what would happen without making changes:
 
-Useful descriptions of signals can be found at
+```bash
+./daily.sh --dry-run
+```
 
-[https://www.computerhope.com/unix/signals.htm](https://www.computerhope.com/unix/signals.htm)
+### Scheduled execution
 
-and [https://github.com/torvalds/linux/blob/master/include/linux/signal.h](https://github.com/torvalds/linux/blob/master/include/linux/signal.h).
+Add to crontab:
 
-## Package management
+```bash
+# Run at 3 AM daily, log stdout and stderr to a file
+0 3 * * * /path/to/daily.sh >> /var/log/daily-maintenance.log 2>&1
+```
 
-The system uses [Arch Linux](https://archlinux.org/) so the system
-update and package management routine uses `pacman`.
+The log file is rotated by the logrotate config installed from `logrotate/`.
+
+### Run individual functions
+
+```bash
+source bump/bump.sh
+source env.sh
+source settings.sh
+source network.sh
+
+set_stamp
+check_wireguard
+```
+
+## Execution Flow
+
+| Step | Module | Function | What it does |
+|------|--------|----------|-------------|
+| 0 | backup.sh | `prepare_root_mount` | Import backup pool and mount /mnt/root if possible |
+| 1 | network.sh | `network_check` | Verify firewall, select interface, start VPN, check DNS |
+| 2 | system.sh | `system_check` | Ensure UNITS_TO_CHECK are active |
+| 3 | system.sh | `run_all_health_checks` | ZFS health, scrub, failed services, journal, pacnew, orphans, thermal |
+| 4 | package.sh | `run_package_maintenance` | Update packages, clean cache, archive database (skipped in dry-run) |
+| 5 | backup.sh | `run_all_backups` | Root backup, local ZFS backups, syncoid replication |
+| 6 | cloud.sh | `run_all_cloud_syncs` | rclone bisync to cloud with sensitive file exclusions |
+| 7 | bump.sh | `cleanup` | Run registered cleanup functions and exit |
+
+## Log Files
+
+| File | Source | Content |
+|------|--------|---------|
+| `/var/log/zfs-backup-*.log` | zbackup | One log per backup pool |
+| `/var/log/daily-maintenance.log` | daily.sh (if cron redirects) | Full stdout/stderr from the run |
+| `journalctl -u sanoid.service` | systemd | Sanoid snapshot activity |
+
+All log files under `/var/log/` are rotated monthly by the logrotate configs
+in `logrotate/`. Install them with `cd logrotate && sudo ./install.sh`.
+
+## Sanoid Snapshot Management
+
+Sanoid configuration is stored in `sanoid/` and installed to `/etc/sanoid/`.
+
+### Automatic snapshots (main pool)
+
+The systemd `sanoid.timer` runs periodically and uses `/etc/sanoid/sanoid.conf`
+to manage snapshots for the main pool. This happens automatically.
+
+### Manual snapshots (external pools)
+
+When an external pool is imported, manually run:
+
+```bash
+sudo sanoid --configdir=/etc/sanoid/<pool-name> --cron
+```
+
+The `--cron` flag tells sanoid to take and prune snapshots according to its
+config. Despite the name, this does not set up a cron job -- it is simply
+sanoid's standard operating mode for snapshot management.
+
+To reinstall or update sanoid configs:
+
+```bash
+cd sanoid && sudo ./install.sh
+```
 
 ## Security
 
-The script(s) here assume that [`ssh` access has been
-setup using `.ssh/config`](https://linuxhandbook.com/ssh-config-file/)
-with no passphrase necessary.
-[Use keys with no passphrase only with care.](https://www.digitalocean.com/community/tutorials/how-to-configure-ssh-key-based-authentication-on-a-linux-server)
+### Network
 
-It also assumes that for the commands executed in this
-script `sudo` does not require a password. Note that
-this can be configured to work for specific commands only:
+- UFW firewall must be active (deny-by-default)
+- WireGuard VPN is verified before network operations
+- DNS is checked to confirm routing through VPN (detects DNS leaks)
 
-* [Run only Specific Commands with sudo in Linux](https://kifarunix.com/run-only-specific-commands-with-sudo-in-linux/)
+### Process Isolation
 
-* [How to run a specific program as root without a password prompt?](https://unix.stackexchange.com/questions/18830/how-to-run-a-specific-program-as-root-without-a-password-prompt)
+- Uses `pkill -u $USER` patterns (not `killall`) to avoid affecting other users
 
-Note the lists of files and folders that are excluded
-from remote or insecure backups:
+### Sensitive Data Protection
 
-* `SECRET_FOLDERS`
+Before cloud sync, `sensitive.sh` generates rclone `--exclude` patterns for
+all files and folders listed in `SECRET_FOLDERS`, `SECRET_FILES`, and
+`SENSITIVE_FOLDERS` in `settings.sh`. These are applied automatically to
+every rclone operation.
 
-* `SECRET_FILES`
+### File Locking
 
-* `SENSITIVE_FOLDERS`
+A lock file at `$XDG_RUNTIME_DIR/daily-maintenance.lock` (or `/tmp/` as
+fallback) prevents concurrent execution.
 
-## Delays
+## Troubleshooting
 
-When repeated attempts at a task are necessry the delay
-is `$WAIT` seconds.
+### "Another instance is already running"
 
-## Parallel work
+The lock file prevents concurrent runs. Check whether another instance is
+actually running:
 
-GNU `parallel` is used with `$MAX_SUBPROCESSES` processes.
+```bash
+ps aux | grep daily.sh
+```
 
-Simultaneous transfers *via* `rclone` are permitted up to
-`$SIMULTANEOUS_TRANSFERS`.
+If no other instance exists, the lock file is stale. It will be released
+automatically when you run `daily.sh` again -- `flock` uses file descriptor
+locking, not the file's existence.
+
+### WireGuard VPN not connecting
+
+```bash
+# Check interface status
+ip link show wg0
+sudo wg show wg0
+
+# Check systemd-networkd
+networkctl status wg0
+
+# Manual connect/disconnect
+vpn up
+vpn down
+```
+
+### ZFS health warnings
+
+```bash
+# Pool status
+zpool status <pool>
+
+# Run scrub if overdue
+sudo zpool scrub <pool>
+
+# Check capacity
+zpool list <pool>
+```
+
+### Syncoid replication failing
+
+```bash
+# Test SSH connectivity to remote host
+ssh <remote-host> true
+
+# Ensure SSH agent has keys loaded
+ssh-add -l
+
+# Manual syncoid test
+syncoid --quiet <pool>/<dataset> <remote-host>:<remote-pool>/<pool>/<dataset>
+```
+
+The SSH agent must have keys loaded when `daily.sh` runs. If running from
+cron, ensure `SSH_AUTH_SOCK` is available.
+
+### Sanoid errors for external pool
+
+If sanoid reports errors about external datasets when the pool is not imported:
+
+```bash
+# Reinstall the main-pool-only config
+cd sanoid && sudo ./install.sh
+```
+
+This ensures `/etc/sanoid/sanoid.conf` only references the main pool datasets.
+
+### Debug mode
+
+```bash
+bash -x ./daily.sh
+```
+
+## Testing
+
+```bash
+# Run all tests
+bats tests/
+
+# Run tests for a specific module
+bats tests/test_network.bats
+bats tests/test_backup.bats
+bats tests/test_system.bats
+bats tests/test_cloud.bats
+bats tests/test_sensitive.bats
+
+# Shell script linting
+shellcheck *.sh
+```
+
+## Related Documentation
+
+- **REMOTE-REPLICATION.md** -- Setup instructions for configuring a remote host as a syncoid replication target
+- **CLAUDE.md** -- Developer guidance for working with Claude Code on this project

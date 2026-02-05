@@ -3,3 +3,20 @@ CLAUDE.md
 .junie
 .idea
 *.prompt
+
+# Machine-specific configuration
+env.sh
+
+# Real backup config files (only .conf.example templates are tracked)
+backup-configs/*.conf
+
+# Real sanoid config files (only .conf.example templates are tracked)
+sanoid/sanoid.conf
+sanoid/*/sanoid.conf
+
+# Internal planning/progress docs
+PLAN.md
+PROGRESS.md
+
+# Log files
+daily.log
