@@ -80,6 +80,36 @@ check_backup_drive() {
     fi
 }
 
+# Find the most recent snapshot, preferring daily/monthly/yearly over hourly.
+# Hourly snapshots are pruned quickly by sanoid (typically 48 hours),
+# so sending a daily (31-day retention) gives a much longer window
+# for the next incremental backup to find a common snapshot.
+find_preferred_snapshot() {
+    local dataset="$1"
+
+    local all_snaps
+    all_snaps=$(zfs list -t snapshot -H -o name "$dataset" 2>/dev/null | cut -d@ -f2)
+
+    if [ -z "$all_snaps" ]; then
+        return 1
+    fi
+
+    # Try daily, monthly, yearly in order of preference, then fall back to any
+    local snap=""
+    for suffix in _daily _monthly _yearly; do
+        snap=$(echo "$all_snaps" | grep "${suffix}$" | sort -r | head -1)
+        if [ -n "$snap" ]; then
+            echo "$snap"
+            return 0
+        fi
+    done
+
+    # No daily/monthly/yearly found — use the most recent snapshot
+    snap=$(echo "$all_snaps" | tail -1)
+    echo "$snap"
+    return 0
+}
+
 # Find the most recent common snapshot between source and backup
 find_common_snapshot() {
     local source_dataset="$1"
@@ -152,15 +182,17 @@ perform_backup() {
             continue
         fi
 
-        # Get latest snapshot from source
+        # Get preferred snapshot from source (daily > monthly > yearly > hourly)
         local latest_snap
-        latest_snap=$(zfs list -t snapshot -H -o name "$dataset" 2>/dev/null | tail -1 | cut -d@ -f2)
+        latest_snap=$(find_preferred_snapshot "$dataset")
 
         if [ -z "$latest_snap" ]; then
             log "WARNING: No snapshots found for $dataset"
             failed_datasets+=("$dataset")
             continue
         fi
+
+        log "Selected snapshot @${latest_snap} for $dataset"
 
         # Check if initial or incremental backup
         if ! zfs list "$backup_dataset" >/dev/null 2>&1; then
@@ -207,25 +239,33 @@ perform_backup() {
                 fi
             else
                 log "WARNING: No common snapshot found between source and backup for $dataset"
-                log "Performing full replication (destroying existing backup snapshots)"
 
                 # List existing snapshots for logging
                 local existing_snaps
                 existing_snaps=$(zfs list -t snapshot -H -o name "$backup_dataset" 2>/dev/null | wc -l)
-                log "Will destroy $existing_snaps existing snapshots in $backup_dataset"
+                log "Backup dataset $backup_dataset has $existing_snaps snapshots with no common ancestor"
 
-                # Destroy the backup dataset and recreate with full send
-                if sudo zfs destroy -r "$backup_dataset" 2>/dev/null; then
-                    log "Destroyed existing backup dataset $backup_dataset"
+                # Rename the old backup dataset to preserve it
+                local rename_suffix
+                rename_suffix=$(date +%Y-%m-%d_%H%M%S)
+                local renamed_dataset="${backup_dataset}.replaced.${rename_suffix}"
+
+                log "Renaming $backup_dataset to $renamed_dataset"
+                if ! sudo zfs rename "$backup_dataset" "$renamed_dataset"; then
+                    log "ERROR: Failed to rename $backup_dataset - cannot proceed with full replication"
+                    failed_datasets+=("$dataset")
+                    continue
                 fi
+                log "Preserved old backup as $renamed_dataset"
 
-                # Ensure parent datasets exist after destroying
+                # Ensure parent datasets exist
                 if ! ensure_parent_datasets "$backup_dataset"; then
                     log "ERROR: Failed to create parent datasets for $backup_dataset"
                     failed_datasets+=("$dataset")
                     continue
                 fi
 
+                log "Performing full replication of $dataset@$latest_snap"
                 if sudo zfs send -v "${dataset}@${latest_snap}" | \
                     mbuffer -s 128k -m 1G -q | \
                     sudo zfs receive -F "$backup_dataset"; then

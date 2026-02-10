@@ -285,24 +285,36 @@ function prepare_root_mount {
     #   0 - /mnt/root is mounted (or was successfully mounted)
     #   1 - Could not mount /mnt/root or root backup not configured
 
+    log_message "prepare_root_mount: ROOT_BACKUP_POOL=${ROOT_BACKUP_POOL:-<unset>}" \
+                "ROOT_BACKUP_CONFIG=${ROOT_BACKUP_CONFIG:-<unset>}" \
+                "ROOT_BACKUP_DATASET=${ROOT_BACKUP_DATASET:-<unset>}"
+
     # Check that root backup is configured
     if [ -z "${ROOT_BACKUP_POOL:-}" ] || [ -z "${ROOT_BACKUP_DATASET:-}" ]; then
-        log_message "root backup not configured (ROOT_BACKUP_POOL/ROOT_BACKUP_DATASET empty)"
+        log_message "prepare_root_mount: FAILED - root backup not configured" \
+                    "(ROOT_BACKUP_POOL or ROOT_BACKUP_DATASET is empty)"
         return 1
     fi
 
     # Already mounted - nothing to do
     if mountpoint -q /mnt/root 2>/dev/null; then
+        log_message "prepare_root_mount: /mnt/root is already mounted"
         return 0
     fi
 
+    log_message "prepare_root_mount: /mnt/root is not currently mounted"
+
     # Check if root backup pool is imported
-    if ! zpool list "$ROOT_BACKUP_POOL" >/dev/null 2>&1; then
+    if zpool list "$ROOT_BACKUP_POOL" >/dev/null 2>&1; then
+        log_message "prepare_root_mount: pool ${ROOT_BACKUP_POOL} is already imported"
+    else
+        log_message "prepare_root_mount: pool ${ROOT_BACKUP_POOL} is not imported, looking for drive"
+
         # Find the config to get drive ID
         local prm_config_file="${BACKUP_CONFIGS_DIR}/${ROOT_BACKUP_CONFIG:-${ROOT_BACKUP_POOL}}.conf"
 
         if [ ! -f "$prm_config_file" ]; then
-            log_message "${ROOT_BACKUP_POOL} config not found, cannot mount /mnt/root"
+            log_message "prepare_root_mount: FAILED - config file not found: ${prm_config_file}"
             return 1
         fi
 
@@ -310,40 +322,58 @@ function prepare_root_mount {
         local prm_drive_id
         prm_drive_id=$(grep '^BACKUP_DRIVE_ID=' "$prm_config_file" | cut -d'"' -f2)
 
-        if [ -z "$prm_drive_id" ] || [ ! -e "/dev/disk/by-id/${prm_drive_id}" ]; then
-            log_message "${ROOT_BACKUP_POOL} drive not connected, cannot mount /mnt/root"
+        if [ -z "$prm_drive_id" ]; then
+            log_message "prepare_root_mount: FAILED - no BACKUP_DRIVE_ID in ${prm_config_file}"
             return 1
         fi
 
-        log_message "importing ${ROOT_BACKUP_POOL} pool for /mnt/root..."
-        if ! sudo zpool import -d /dev/disk/by-id "$ROOT_BACKUP_POOL"; then
-            log_message "failed to import ${ROOT_BACKUP_POOL} pool"
+        if [ ! -e "/dev/disk/by-id/${prm_drive_id}" ]; then
+            log_message "prepare_root_mount: FAILED - drive not connected:" \
+                        "/dev/disk/by-id/${prm_drive_id} does not exist"
             return 1
         fi
+
+        log_message "prepare_root_mount: drive found at /dev/disk/by-id/${prm_drive_id}"
+        log_message "prepare_root_mount: importing ${ROOT_BACKUP_POOL}..."
+        local prm_import_output
+        if ! prm_import_output=$(sudo zpool import -d /dev/disk/by-id "$ROOT_BACKUP_POOL" 2>&1); then
+            log_message "prepare_root_mount: FAILED - zpool import returned: ${prm_import_output}"
+            return 1
+        fi
+        log_message "prepare_root_mount: pool ${ROOT_BACKUP_POOL} imported successfully"
     fi
 
     # Load encryption keys if needed
     local prm_keystatus
     prm_keystatus=$(sudo zfs get -H -o value keystatus "$ROOT_BACKUP_POOL" 2>/dev/null)
+    log_message "prepare_root_mount: keystatus for ${ROOT_BACKUP_POOL} is ${prm_keystatus:-<unknown>}"
     if [ "$prm_keystatus" = "unavailable" ]; then
-        log_message "encryption key required for ${ROOT_BACKUP_POOL} pool"
-        if ! sudo zfs load-key "$ROOT_BACKUP_POOL"; then
-            log_message "failed to load encryption key for ${ROOT_BACKUP_POOL}"
+        log_message "prepare_root_mount: loading encryption key for ${ROOT_BACKUP_POOL}..."
+        local prm_key_output
+        if ! prm_key_output=$(sudo zfs load-key "$ROOT_BACKUP_POOL" 2>&1); then
+            log_message "prepare_root_mount: FAILED - zfs load-key returned: ${prm_key_output}"
             return 1
         fi
+        log_message "prepare_root_mount: encryption key loaded for ${ROOT_BACKUP_POOL}"
     fi
 
     # Mount /mnt/root
     if ! mountpoint -q /mnt/root 2>/dev/null; then
-        sudo zfs mount "$ROOT_BACKUP_DATASET" 2>/dev/null
+        log_message "prepare_root_mount: mounting ${ROOT_BACKUP_DATASET} at /mnt/root..."
+        local prm_mount_output
+        if ! prm_mount_output=$(sudo zfs mount "$ROOT_BACKUP_DATASET" 2>&1); then
+            log_message "prepare_root_mount: FAILED - zfs mount ${ROOT_BACKUP_DATASET} returned: ${prm_mount_output}"
+            return 1
+        fi
     fi
 
     if mountpoint -q /mnt/root 2>/dev/null; then
-        log_message "/mnt/root is ready"
+        log_message "prepare_root_mount: SUCCESS - /mnt/root is ready"
         return 0
     fi
 
-    log_message "failed to mount /mnt/root"
+    log_message "prepare_root_mount: FAILED - /mnt/root is still not a mountpoint" \
+                "after all steps completed without error"
     return 1
 }
 
@@ -374,8 +404,21 @@ function run_root_backup {
 
     # Check if /mnt/root is mounted
     if ! mountpoint -q /mnt/root 2>/dev/null; then
-        log_message "/mnt/root is not mounted, skipping root backup"
-        return 0  # Not an error, just skipped
+        local rrb_pool_state="not imported"
+        if zpool list "${ROOT_BACKUP_POOL:-}" >/dev/null 2>&1; then
+            rrb_pool_state="imported"
+            local rrb_keystatus
+            rrb_keystatus=$(sudo zfs get -H -o value keystatus "${ROOT_BACKUP_POOL}" 2>/dev/null)
+            rrb_pool_state="${rrb_pool_state}, keystatus=${rrb_keystatus:-unknown}"
+            local rrb_mountpoint
+            rrb_mountpoint=$(sudo zfs get -H -o value mountpoint "${ROOT_BACKUP_DATASET:-}" 2>/dev/null)
+            local rrb_mounted
+            rrb_mounted=$(sudo zfs get -H -o value mounted "${ROOT_BACKUP_DATASET:-}" 2>/dev/null)
+            rrb_pool_state="${rrb_pool_state}, dataset mountpoint=${rrb_mountpoint:-unknown}, mounted=${rrb_mounted:-unknown}"
+        fi
+        log_message "run_root_backup: SKIPPED - /mnt/root is not mounted" \
+                    "(pool ${ROOT_BACKUP_POOL:-<unset>}: ${rrb_pool_state})"
+        return 0
     fi
 
     # Dry-run mode: show what would be done

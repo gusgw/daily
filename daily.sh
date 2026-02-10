@@ -166,7 +166,9 @@ not_empty "user name (USER)" "$USER"
 # =============================================================================
 
 # Step 0: Prepare backup mounts (prompt for passphrases early)
-prepare_root_mount
+if ! prepare_root_mount; then
+    log_message "WARNING: prepare_root_mount failed - root backup will be skipped later"
+fi
 
 # Step 1: Network and VPN
 # Verify network connectivity and ensure WireGuard VPN is active
