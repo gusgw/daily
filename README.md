@@ -197,8 +197,9 @@ TEMP_CRIT_THRESHOLD=95
 
 ```bash
 SECRET_FOLDERS=( '.ssh' '.gnupg' '.cert' '.pki' '.password-store' )
-SECRET_FILES=( "*.asc" "*.key" "*.pem" "id_rsa*" "id_dsa*" "id_ed25519*" )
-SENSITIVE_FOLDERS=( '.git' '.stfolder' '.stversions' '.local' 'venv' )
+SECRET_FILES=( "*.asc" "*.key" "*.pem" "id_rsa*" "id_dsa*" "id_ed25519*" ".env" )
+SENSITIVE_FOLDERS=( '.git' '.stfolder' '.stversions' '.local'
+                    '*venv*' 'node_modules' '__pycache__' '.cache' )
 ```
 
 These patterns are automatically excluded from cloud sync operations.

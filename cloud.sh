@@ -85,7 +85,7 @@ function run_rclone_bisync {
         # bisync returns 2 for "resync required" which isn't a real error
         if [ "$rc" -eq 2 ]; then
             log_message "bisync requires --resync (first run or changes detected)"
-            log_message "Run manually: rclone bisync --resync ${rrb_local} ${rrb_remote}"
+            log_message "Run manually: rclone bisync --resync ${rrb_remote} ${rrb_local}"
         else
             report "$rc" "rclone bisync failed"
         fi
@@ -264,6 +264,21 @@ function run_cloud_sync {
     log_setting "cloud sync local" "$rcs_local"
     log_setting "cloud sync remote" "$rcs_remote"
     log_setting "cloud sync mode" "$rcs_mode"
+
+    # For SFTP remotes, check host is reachable before attempting sync
+    local rcs_remote_type
+    rcs_remote_type=$(rclone config show "$rcs_remote_name" 2>/dev/null | grep '^type' | cut -d' ' -f3)
+    if [ "$rcs_remote_type" = "sftp" ]; then
+        local rcs_sftp_host rcs_sftp_user
+        rcs_sftp_host=$(rclone config show "$rcs_remote_name" 2>/dev/null | grep '^host' | cut -d' ' -f3)
+        rcs_sftp_user=$(rclone config show "$rcs_remote_name" 2>/dev/null | grep '^user' | cut -d' ' -f3)
+        local rcs_ssh_target="${rcs_sftp_user:+${rcs_sftp_user}@}${rcs_sftp_host}"
+        log_message "SFTP remote detected, checking host reachability: ${rcs_ssh_target}"
+        if ! check_host_reachable "$rcs_ssh_target"; then
+            log_message "skipping sync - ${rcs_ssh_target} not reachable"
+            return 0
+        fi
+    fi
 
     # Check local path exists
     if [ ! -d "$rcs_local" ]; then

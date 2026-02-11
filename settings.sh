@@ -115,14 +115,15 @@ ROOT_BACKUP_DATASET="${ROOT_BACKUP_DATASET:-}"
 #   CLOUD SYNC CONFIGURATION
 # =============================================================================
 
-#   Cloud sync targets for rclone bisync
-#   Set CLOUD_SYNCS in env.sh as "local_path:remote_name:"
-#   Remote uses rclone format with trailing colon (e.g., "remote:")
-#   These are bidirectionally synced using rclone bisync
+#   Cloud sync targets for rclone
+#   Set CLOUD_SYNCS in env.sh as space-delimited entries
+#   Format: "local_path:remote_name:remote_path[:mode]"
+#   mode is optional: bisync (default), sync, or copy
+#   For SFTP remotes, host reachability is checked before syncing
 _cloud_syncs_str="${CLOUD_SYNCS:-}"
 CLOUD_SYNCS=()
 if [ -n "$_cloud_syncs_str" ]; then
-    CLOUD_SYNCS=("$_cloud_syncs_str")
+    IFS=' ' read -ra CLOUD_SYNCS <<< "$_cloud_syncs_str"
 fi
 unset _cloud_syncs_str
 
@@ -133,10 +134,11 @@ unset _cloud_syncs_str
 #   Automatically ensure that these folders and files
 #   are not copied to remote backups or cloud storage
 SECRET_FOLDERS=( '.ssh' '.gnupg' '.cert' '.pki' '.password-store' )
-SECRET_FILES=( "*.asc" "*.key" "*.pem" "id_rsa*" "id_dsa*" "id_ed25519*" )
+SECRET_FILES=( "*.asc" "*.key" "*.pem" "id_rsa*" "id_dsa*" "id_ed25519*" ".env" )
 
 #   Also keep these from being sent to cloud storage
-SENSITIVE_FOLDERS=( '.git' '.stfolder' '.stversions' '.local' 'venv' )
+SENSITIVE_FOLDERS=( '.git' '.stfolder' '.stversions' '.local'
+                    '*venv*' 'node_modules' '__pycache__' '.cache' )
 
 # =============================================================================
 #   OUTPUT FORMATTING

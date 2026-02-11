@@ -276,15 +276,15 @@ load 'test_helper'
 # Phase 12 Bug Fix Tests
 # =============================================================================
 
-@test "SENSITIVE_FOLDERS includes venv for Python virtual environments" {
+@test "SENSITIVE_FOLDERS includes *venv* for Python virtual environments" {
     source_project_file "bump/bump.sh"
     source_project_file "settings.sh"
     source_project_file "sensitive.sh"
 
-    # venv should be in SENSITIVE_FOLDERS
+    # *venv* should be in SENSITIVE_FOLDERS (matches venv, .venv, my_venv, etc.)
     local found_venv=false
     for folder in "${SENSITIVE_FOLDERS[@]}"; do
-        if [[ "$folder" == "venv" ]]; then
+        if [[ "$folder" == '*venv*' ]]; then
             found_venv=true
             break
         fi
@@ -292,7 +292,7 @@ load 'test_helper'
     assert [ "$found_venv" = "true" ]
 }
 
-@test "get_rclone_exclude_array includes venv exclusion pattern" {
+@test "get_rclone_exclude_array includes *venv* exclusion pattern" {
     source_project_file "bump/bump.sh"
     source_project_file "settings.sh"
     source_project_file "sensitive.sh"
@@ -300,10 +300,10 @@ load 'test_helper'
     local -a excludes
     mapfile -t excludes < <(get_rclone_exclude_array)
 
-    # Should contain venv pattern
+    # Should contain *venv* pattern (matches venv, .venv, my_venv, etc.)
     local found_venv=false
     for item in "${excludes[@]}"; do
-        if [[ "$item" == "venv/" ]] || [[ "$item" == "**/venv/" ]]; then
+        if [[ "$item" == '*venv*/' ]] || [[ "$item" == '**/*venv*/' ]]; then
             found_venv=true
             break
         fi
