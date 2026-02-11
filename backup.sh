@@ -335,9 +335,8 @@ function prepare_root_mount {
 
         log_message "prepare_root_mount: drive found at /dev/disk/by-id/${prm_drive_id}"
         log_message "prepare_root_mount: importing ${ROOT_BACKUP_POOL}..."
-        local prm_import_output
-        if ! prm_import_output=$(sudo zpool import -d /dev/disk/by-id "$ROOT_BACKUP_POOL" 2>&1); then
-            log_message "prepare_root_mount: FAILED - zpool import returned: ${prm_import_output}"
+        if ! sudo zpool import -d /dev/disk/by-id "$ROOT_BACKUP_POOL"; then
+            log_message "prepare_root_mount: FAILED - zpool import returned non-zero"
             return 1
         fi
         log_message "prepare_root_mount: pool ${ROOT_BACKUP_POOL} imported successfully"
@@ -349,9 +348,8 @@ function prepare_root_mount {
     log_message "prepare_root_mount: keystatus for ${ROOT_BACKUP_POOL} is ${prm_keystatus:-<unknown>}"
     if [ "$prm_keystatus" = "unavailable" ]; then
         log_message "prepare_root_mount: loading encryption key for ${ROOT_BACKUP_POOL}..."
-        local prm_key_output
-        if ! prm_key_output=$(sudo zfs load-key "$ROOT_BACKUP_POOL" 2>&1); then
-            log_message "prepare_root_mount: FAILED - zfs load-key returned: ${prm_key_output}"
+        if ! sudo zfs load-key "$ROOT_BACKUP_POOL"; then
+            log_message "prepare_root_mount: FAILED - zfs load-key returned non-zero"
             return 1
         fi
         log_message "prepare_root_mount: encryption key loaded for ${ROOT_BACKUP_POOL}"
@@ -360,9 +358,8 @@ function prepare_root_mount {
     # Mount /mnt/root
     if ! mountpoint -q /mnt/root 2>/dev/null; then
         log_message "prepare_root_mount: mounting ${ROOT_BACKUP_DATASET} at /mnt/root..."
-        local prm_mount_output
-        if ! prm_mount_output=$(sudo zfs mount "$ROOT_BACKUP_DATASET" 2>&1); then
-            log_message "prepare_root_mount: FAILED - zfs mount ${ROOT_BACKUP_DATASET} returned: ${prm_mount_output}"
+        if ! sudo zfs mount "$ROOT_BACKUP_DATASET"; then
+            log_message "prepare_root_mount: FAILED - zfs mount ${ROOT_BACKUP_DATASET} returned non-zero"
             return 1
         fi
     fi
