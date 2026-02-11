@@ -152,94 +152,111 @@ function check_vpn_dns {
 #   CONNECTIVITY CHECKS
 # =============================================================================
 
-function ping_router {
-    # Make sure we can ping the local router
-
-    local pr_intfc=$1
-    not_empty "interface for router ping" "$pr_intfc"
-    log_setting "interface for router ping" "$pr_intfc"
-    local pr_rc=1
-    local pr_count=0
-    local pr_router
-    pr_router=$(ip route | grep default | grep "$pr_intfc" | head -1 | cut -d ' ' -f 3)
-
-    if [ -z "${pr_router}" ]; then
-        report 1 "no router on $pr_intfc" || return $?
-    fi
-
-    while [ "$pr_rc" -gt 0 ] && [ "$pr_count" -lt "$ATTEMPTS" ]; do
-        sleep "${WAIT}"
-        ping -q -w 1 -c 1 "${pr_router}"
-        pr_rc=$?
-        pr_count=$((pr_count + 1))
-    done
-
-    if [ "$pr_rc" -gt 0 ]; then
-        report "$pr_rc" "ping to local router via $pr_intfc" "no network so stop"
-    fi
-    return 0
-}
-
-##
-# Test network connectivity by pinging a target through a specific interface.
-#
-# This function sends ping packets through a specified network interface
-# to a target host and evaluates packet loss. If packet loss exceeds
-# the threshold (50%), the function triggers a cleanup and exit.
-#
-# Arguments:
-#   $1 - Network interface to use (e.g., "eth0", "wg0")
-#   $2 - Target hostname or IP to ping
-#
-# Global variables:
-#   STAMP - Timestamp for logging
-#   NETWORK_ERROR - Exit code for network failures
-#
-# Returns:
-#   0 - Success (acceptable packet loss)
-#   Exits with NETWORK_ERROR if all packets are lost
-#
-# Example:
-#   ping_check "wg0" "8.8.8.8"
-##
 function ping_check {
+    # Test network connectivity by pinging a target through a specific interface.
+    # Sends ping packets and evaluates packet loss.
+    #
+    # Arguments:
+    #   $1 - Network interface to use (e.g., "eth0", "wg0")
+    #   $2 - Target hostname or IP to ping
+    #
+    # Returns:
+    #   0 - Success (packet loss at or below 50%)
+    #   1 - Failure (packet loss above 50% or 100%)
+
     local pc_intfc=$1
     local pc_tgt=$2
     not_empty "ping check interface" "$pc_intfc"
     not_empty "ping check target" "$pc_tgt"
     not_empty "date stamp" "$STAMP"
     log_setting "interface to check with ping" "$pc_intfc"
-    log_setting "url for ping" "$pc_tgt"
+    log_setting "target for ping" "$pc_tgt"
 
-    # Max lost packet percentage
     local pc_max_loss=50
     local pc_packet_count=10
     local pc_timeout=20
     local pc_packets_lost
     # Use || true to prevent set -e from exiting on ping failure
-    # The function handles errors via the packet loss check below
     # Use -4 to force IPv4 (VPN may not route IPv6)
     pc_packets_lost=$(ping -4 -W "$pc_timeout" -c "$pc_packet_count" -I "$pc_intfc" "$pc_tgt" 2>/dev/null | \
                       grep -E '[0-9]+%' | \
                       awk '{print $6}') || true
 
     if [ -z "$pc_packets_lost" ] || [ "$pc_packets_lost" == "100%" ]; then
-        cleanup "$NETWORK_ERROR"
         log_message "all packets lost from ${pc_tgt} via ${pc_intfc}"
-    else
-        if [ "${pc_packets_lost}" == "0%" ]; then
-            return 0
-        else
-            # Packet loss rate between 0 and 100%
-            log_message "${pc_packets_lost} packets lost from ${pc_tgt} via ${pc_intfc}"
-            local pc_real_loss="${pc_packets_lost%\%}"
-            if [[ ${pc_real_loss} -gt ${pc_max_loss} ]]; then
-                cleanup "$NETWORK_ERROR"
-            else
-                return 0
-            fi
-        fi
+        return 1
     fi
+
+    if [ "${pc_packets_lost}" == "0%" ]; then
+        log_message "no packet loss from ${pc_tgt} via ${pc_intfc}"
+        return 0
+    fi
+
+    # Partial packet loss
+    log_message "${pc_packets_lost} packets lost from ${pc_tgt} via ${pc_intfc}"
+    local pc_real_loss="${pc_packets_lost%\%}"
+    if [[ ${pc_real_loss} -gt ${pc_max_loss} ]]; then
+        return 1
+    fi
+    return 0
+}
+
+function check_connectivity {
+    # Verify network connectivity, VPN-aware.
+    #
+    # If WireGuard is already up, tests connectivity through the VPN
+    # interface (physical interface traffic is blocked by the firewall).
+    # Otherwise tests the physical interface: first the default gateway,
+    # then an external host as fallback (for gateways that block ICMP,
+    # e.g. mobile hotspots).
+    #
+    # Arguments:
+    #   $1 - Physical network interface (e.g. "wlan0", "enp0s31f6")
+    #
+    # Returns:
+    #   0 - Network is reachable
+    #   Calls report with exit message if unreachable (fatal)
+
+    local cc_intfc=$1
+    local cc_wg_interface="${WIREGUARD_INTERFACE:-wg0}"
+    not_empty "interface for connectivity check" "$cc_intfc"
+
+    # If VPN is already up, test through VPN — firewall blocks non-VPN traffic
+    if check_wireguard; then
+        log_message "VPN is up, testing connectivity via $cc_wg_interface"
+        if ping_check "$cc_wg_interface" "1.1.1.1"; then
+            log_message "connectivity confirmed via $cc_wg_interface"
+            return 0
+        fi
+        report 1 "VPN is up but no connectivity via $cc_wg_interface" \
+                 "no network so stop"
+    fi
+
+    # VPN not up — test the physical interface
+    log_message "VPN is not up, testing connectivity via $cc_intfc"
+    local cc_router
+    cc_router=$(ip route | grep default | grep "$cc_intfc" | head -1 | cut -d ' ' -f 3)
+
+    if [ -z "${cc_router}" ]; then
+        report 1 "no default route on $cc_intfc" || return $?
+    fi
+
+    # Try gateway
+    if ping_check "$cc_intfc" "$cc_router"; then
+        log_message "gateway ${cc_router} reachable via $cc_intfc"
+        return 0
+    fi
+
+    # Gateway didn't respond — try external host without interface binding
+    # (some gateways block ICMP, and firewall rules may interfere with -I)
+    log_message "gateway ${cc_router} not responding on $cc_intfc, trying external host"
+    if ping -4 -W 5 -c 3 1.1.1.1 &>/dev/null; then
+        log_message "external host reachable (gateway does not respond to ping)"
+        return 0
+    fi
+
+    report 1 "no connectivity via $cc_intfc (gateway ${cc_router} and 1.1.1.1 both unreachable)" \
+             "no network so stop"
 }
 
 function check_host_reachable {
@@ -308,24 +325,33 @@ function network_check {
         firewall_active
     fi
 
-    # Check network connectivity (prefer wired over wireless)
+    # Select physical interface (prefer wired over wireless)
+    local nc_phys_intfc=""
     if check_intfc "$nc_wired"; then
+        nc_phys_intfc="$nc_wired"
         if [ "$nc_dry_run" = "dry-run" ]; then
             log_message "[DRY-RUN] would block wlan, using $nc_wired"
         else
             sudo rfkill block wlan
         fi
-        ping_router "$nc_wired"
     else
+        nc_phys_intfc="$nc_wireless"
         if [ "$nc_dry_run" = "dry-run" ]; then
             log_message "[DRY-RUN] would unblock wlan, using $nc_wireless"
         else
             sudo rfkill unblock wlan
         fi
-        ping_router "$nc_wireless"
     fi
 
-    # Check WireGuard VPN
+    # Check connectivity — if VPN is already up, tests through VPN;
+    # otherwise tests the physical interface
+    if [ "$nc_dry_run" = "dry-run" ]; then
+        log_message "[DRY-RUN] would check connectivity via $nc_phys_intfc"
+    else
+        check_connectivity "$nc_phys_intfc"
+    fi
+
+    # Start WireGuard if not already up
     if ! check_wireguard; then
         if [ "$nc_dry_run" = "dry-run" ]; then
             log_message "[DRY-RUN] would start WireGuard"
@@ -335,14 +361,8 @@ function network_check {
         fi
     fi
 
-    # Verify VPN connectivity (non-fatal - warn and continue)
+    # Verify VPN DNS (non-fatal)
     if check_wireguard; then
-        # Test VPN connectivity but don't exit on failure
-        if ping -4 -W 10 -c 3 -I "$nc_wg_interface" wiki.archlinux.org &>/dev/null; then
-            log_message "VPN connectivity confirmed"
-        else
-            log_message "WARNING: VPN ping failed - connectivity may be limited"
-        fi
         check_vpn_dns
     else
         log_message "WARNING: VPN is not connected"

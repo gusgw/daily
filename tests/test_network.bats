@@ -79,11 +79,11 @@ load 'test_helper'
     assert_output --partial "function"
 }
 
-@test "ping_router function exists" {
+@test "check_connectivity function exists" {
     source_project_file "bump/bump.sh"
     source_project_file "settings.sh"
     source_project_file "network.sh"
-    run type ping_router
+    run type check_connectivity
     assert_success
     assert_output --partial "function"
 }
@@ -224,6 +224,208 @@ load 'test_helper'
     # Use a definitely unreachable host
     run check_host_reachable "user@192.0.2.1"  # TEST-NET-1, not routable
     assert_failure
+}
+
+# =============================================================================
+# ping_check Tests (with mocked ping)
+# =============================================================================
+
+@test "ping_check returns success with 0% packet loss" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+
+    # Mock ping to report 0% loss
+    ping() {
+        echo "10 packets transmitted, 10 received, 0% packet loss, time 9012ms"
+        return 0
+    }
+    export -f ping
+
+    run ping_check "lo" "127.0.0.1"
+    assert_success
+}
+
+@test "ping_check returns failure with 100% packet loss" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+
+    # Mock ping to report 100% loss
+    ping() {
+        echo "10 packets transmitted, 0 received, 100% packet loss, time 9012ms"
+        return 1
+    }
+    export -f ping
+
+    run ping_check "lo" "192.0.2.1"
+    assert_failure
+}
+
+@test "ping_check returns failure when packet loss exceeds 50%" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+
+    # Mock ping to report 80% loss
+    ping() {
+        echo "10 packets transmitted, 2 received, 80% packet loss, time 9012ms"
+        return 0
+    }
+    export -f ping
+
+    run ping_check "lo" "192.0.2.1"
+    assert_failure
+}
+
+@test "ping_check returns success with acceptable partial loss" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+
+    # Mock ping to report 20% loss (below 50% threshold)
+    ping() {
+        echo "10 packets transmitted, 8 received, 20% packet loss, time 9012ms"
+        return 0
+    }
+    export -f ping
+
+    run ping_check "lo" "192.0.2.1"
+    assert_success
+}
+
+@test "ping_check returns failure when ping produces no output" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+
+    # Mock ping to produce no output
+    ping() {
+        return 1
+    }
+    export -f ping
+
+    run ping_check "lo" "192.0.2.1"
+    assert_failure
+}
+
+# =============================================================================
+# check_connectivity Tests (with mocked ping, ip, and check_wireguard)
+# =============================================================================
+
+@test "check_connectivity succeeds via VPN when WireGuard is up" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+
+    # Mock check_wireguard to report VPN is up
+    check_wireguard() { return 0; }
+    export -f check_wireguard
+
+    # Mock ping to succeed through VPN interface
+    ping() {
+        echo "10 packets transmitted, 10 received, 0% packet loss, time 9012ms"
+        return 0
+    }
+    export -f ping
+
+    run check_connectivity "lo"
+    assert_success
+    assert_output --partial "connectivity confirmed via"
+}
+
+@test "check_connectivity succeeds via gateway when VPN is down" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+
+    # Mock check_wireguard to report VPN is down
+    check_wireguard() { return 1; }
+    export -f check_wireguard
+
+    # Mock ip to return a default route
+    ip() {
+        echo "default via 192.168.1.1 dev lo proto static"
+    }
+    export -f ip
+
+    # Mock ping to succeed
+    ping() {
+        echo "10 packets transmitted, 10 received, 0% packet loss, time 9012ms"
+        return 0
+    }
+    export -f ping
+
+    run check_connectivity "lo"
+    assert_success
+    assert_output --partial "gateway 192.168.1.1 reachable"
+}
+
+@test "check_connectivity falls back to external host when gateway blocks ICMP" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+
+    # Mock check_wireguard to report VPN is down
+    check_wireguard() { return 1; }
+    export -f check_wireguard
+
+    # Mock ip to return a default route
+    ip() {
+        echo "default via 10.237.67.223 dev lo proto static"
+    }
+    export -f ip
+
+    # Mock ping: fail for interface-bound pings (gateway), succeed for unbound (1.1.1.1)
+    ping() {
+        local has_interface_bind=false
+        for arg in "$@"; do
+            if [[ "$arg" == "-I" ]]; then
+                has_interface_bind=true
+                break
+            fi
+        done
+        if $has_interface_bind; then
+            echo "10 packets transmitted, 0 received, 100% packet loss, time 9012ms"
+            return 1
+        else
+            return 0
+        fi
+    }
+    export -f ping
+
+    run check_connectivity "lo"
+    assert_success
+    assert_output --partial "gateway does not respond to ping"
+}
+
+@test "check_connectivity reports no default route when VPN is down" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+
+    # Mock check_wireguard to report VPN is down
+    check_wireguard() { return 1; }
+    export -f check_wireguard
+
+    # Mock ip to return no default route for our interface
+    ip() {
+        echo "10.0.0.0/24 dev eth0 proto kernel scope link src 10.0.0.5"
+    }
+    export -f ip
+
+    run check_connectivity "lo"
+    assert_failure
+    assert_output --partial "no default route"
 }
 
 # =============================================================================
