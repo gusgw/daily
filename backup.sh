@@ -442,6 +442,59 @@ function run_root_backup {
 }
 
 # =============================================================================
+#   CLEANUP: EXPORT BACKUP POOLS ON EXIT/SIGNAL
+# =============================================================================
+
+function cleanup_export_backup_pools {
+    # Export any backup pools that are currently imported.
+    # Registered in cleanup_functions so it runs on signal or exit.
+    #
+    # Pools checked:
+    #   - ROOT_BACKUP_POOL (imported by prepare_root_mount)
+    #   - Pools from ZFS_BACKUP_TARGETS configs (imported by zbackup)
+
+    local cebp_pools=()
+
+    # Collect pool name from ROOT_BACKUP_POOL
+    if [ -n "${ROOT_BACKUP_POOL:-}" ]; then
+        cebp_pools+=("$ROOT_BACKUP_POOL")
+    fi
+
+    # Collect pool names from ZFS_BACKUP_TARGETS config files
+    local cebp_config cebp_config_file cebp_pool
+    for cebp_config in "${ZFS_BACKUP_TARGETS[@]}"; do
+        cebp_config_file="${BACKUP_CONFIGS_DIR}/${cebp_config}.conf"
+        if [ -f "$cebp_config_file" ]; then
+            cebp_pool=$(grep '^BACKUP_POOL=' "$cebp_config_file" | cut -d'"' -f2)
+            if [ -n "$cebp_pool" ]; then
+                cebp_pools+=("$cebp_pool")
+            fi
+        fi
+    done
+
+    # Deduplicate (e.g. silver appears as both ROOT_BACKUP_POOL and a target)
+    local -A cebp_seen
+    local cebp_name
+    for cebp_name in "${cebp_pools[@]}"; do
+        if [ -n "${cebp_seen[$cebp_name]+x}" ]; then
+            continue
+        fi
+        cebp_seen[$cebp_name]=1
+
+        if zpool list "$cebp_name" >/dev/null 2>&1; then
+            log_message "cleanup: exporting backup pool ${cebp_name}..."
+            sync
+            sudo zpool export "$cebp_name" 2>/dev/null \
+                || sudo zpool export -f "$cebp_name" 2>/dev/null \
+                || log_message "cleanup: WARNING - failed to export ${cebp_name}"
+        fi
+    done
+}
+
+# Register the cleanup handler (runs on signal or normal exit via cleanup)
+cleanup_functions+=('cleanup_export_backup_pools')
+
+# =============================================================================
 #   MAIN BACKUP ENTRY POINT
 # =============================================================================
 

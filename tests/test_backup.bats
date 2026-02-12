@@ -432,6 +432,139 @@ load 'test_helper'
 # Phase 12 Bug Fix Tests
 # =============================================================================
 
+@test "cleanup_export_backup_pools function exists" {
+    source_project_file "bump/bump.sh"
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+    run type cleanup_export_backup_pools
+    assert_success
+    assert_output --partial "function"
+}
+
+@test "cleanup_export_backup_pools is registered in cleanup_functions" {
+    source_project_file "bump/bump.sh"
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    local found=false
+    for fn in "${cleanup_functions[@]}"; do
+        if [ "$fn" = "cleanup_export_backup_pools" ]; then
+            found=true
+            break
+        fi
+    done
+    assert [ "$found" = "true" ]
+}
+
+@test "cleanup_export_backup_pools skips pools that are not imported" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    # Mock zpool list to always fail (pool not imported)
+    zpool() { return 1; }
+    export -f zpool
+
+    ROOT_BACKUP_POOL="testpool"
+    ZFS_BACKUP_TARGETS=()
+    BACKUP_CONFIGS_DIR="/nonexistent"
+
+    # Should complete without error (nothing to export)
+    run cleanup_export_backup_pools
+    assert_success
+    refute_output --partial "exporting"
+}
+
+@test "cleanup_export_backup_pools exports imported pool" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    # Track calls
+    local export_calls_file="${BATS_TMPDIR}/export_calls"
+    echo -n "" > "$export_calls_file"
+
+    # Mock zpool list to succeed (pool is imported)
+    zpool() {
+        if [ "$1" = "list" ]; then
+            return 0
+        fi
+        if [ "$1" = "export" ]; then
+            echo "$2" >> "${BATS_TMPDIR}/export_calls"
+            return 0
+        fi
+    }
+    export -f zpool
+
+    # Mock sudo to just run the command
+    sudo() { "$@"; }
+    export -f sudo
+
+    # Mock sync
+    sync() { return 0; }
+    export -f sync
+
+    ROOT_BACKUP_POOL="testpool"
+    ZFS_BACKUP_TARGETS=()
+    BACKUP_CONFIGS_DIR="/nonexistent"
+
+    run cleanup_export_backup_pools
+    assert_success
+    assert_output --partial "exporting backup pool testpool"
+}
+
+@test "cleanup_export_backup_pools deduplicates pool names" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    # Create a temp config dir with a config that uses the same pool as ROOT_BACKUP_POOL
+    local config_dir="${BATS_TMPDIR}/backup-configs"
+    mkdir -p "$config_dir"
+    echo 'BACKUP_POOL="mypool"' > "$config_dir/mypool.conf"
+
+    # Count export attempts
+    local export_count_file="${BATS_TMPDIR}/export_count"
+    echo "0" > "$export_count_file"
+
+    zpool() {
+        if [ "$1" = "list" ]; then return 0; fi
+        if [ "$1" = "export" ]; then
+            local count
+            count=$(cat "${BATS_TMPDIR}/export_count")
+            echo $((count + 1)) > "${BATS_TMPDIR}/export_count"
+            return 0
+        fi
+    }
+    export -f zpool
+
+    sudo() { "$@"; }
+    export -f sudo
+
+    sync() { return 0; }
+    export -f sync
+
+    ROOT_BACKUP_POOL="mypool"
+    ZFS_BACKUP_TARGETS=("mypool")
+    BACKUP_CONFIGS_DIR="$config_dir"
+
+    run cleanup_export_backup_pools
+    assert_success
+
+    # Should only export once despite appearing twice
+    local count
+    count=$(cat "$export_count_file")
+    assert [ "$count" -eq 1 ]
+}
+
 @test "run_root_backup treats rsync exit code 23 as warning not error" {
     source_project_file "bump/bump.sh"
     set_stamp
