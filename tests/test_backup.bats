@@ -349,7 +349,17 @@ load 'test_helper'
     source_project_file "network.sh"
     source_project_file "backup.sh"
 
-    # With empty target arrays, should complete successfully
+    # CRITICAL: the test harness sources env.sh in setup(), which
+    # populates ZFS_BACKUP_TARGETS and (via SYNCOID_DATASETS)
+    # SYNCOID_TARGETS with the operator's REAL targets pointing at
+    # the real remote host. This test previously did not clear them,
+    # so `run run_all_backups` launched a real multi-hour syncoid
+    # replication to toby and a real zbackup - the suite would hang
+    # indefinitely here. Clear the arrays so only the empty-config
+    # early-return paths run, matching the test's stated intent.
+    ZFS_BACKUP_TARGETS=()
+    SYNCOID_TARGETS=()
+
     run run_all_backups
     assert_success
 }
@@ -408,9 +418,13 @@ load 'test_helper'
         assert_failure
         assert_output --partial "syncoid command not found"
     else
-        # syncoid exists - will fail on unreachable host
+        # syncoid exists - host unreachable. Under the skip/fail
+        # classification an unreachable host is a SKIP outcome
+        # (BACKUP_SKIPPED), not plain success, so the run summary can
+        # report ok/skipped/failed accurately. (192.0.2.1 is TEST-NET;
+        # check_host_reachable fails fast against it.)
         run run_syncoid_replication "test/dataset" "user@192.0.2.1:test/dest"
-        assert_success  # Returns 0 when host not reachable (skipped)
+        [ "$status" -eq "$BACKUP_SKIPPED" ]
         assert_output --partial "not reachable"
     fi
 }
