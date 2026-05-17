@@ -214,9 +214,19 @@ function clear_stale_resume_token {
     not_empty "resume token host" "$csrt_host"
     not_empty "resume token dataset" "$csrt_dataset"
 
-    local csrt_token
+    # BUG1 fix: distinguish "ssh failed, cannot determine" from
+    # "genuinely no token". On ssh failure we must NOT claim success
+    # (which would let a real stale token block the next run); signal
+    # the caller to skip this dataset for this run instead.
+    local csrt_token csrt_ssh_rc
     csrt_token=$(ssh -o BatchMode=yes "$csrt_host" \
         "sudo zfs get -H -o value receive_resume_token ${csrt_dataset}" 2>/dev/null)
+    csrt_ssh_rc=$?
+
+    if [ "$csrt_ssh_rc" -ne 0 ]; then
+        report "$NETWORK_ERROR" "could not query resume token for ${csrt_dataset} (ssh rc ${csrt_ssh_rc})"
+        return "$NETWORK_ERROR"
+    fi
 
     if [ -z "$csrt_token" ] || [ "$csrt_token" = "-" ]; then
         # No pending resumable receive: nothing to do.
@@ -269,8 +279,17 @@ function syncoid_progress_heartbeat {
         [ -z "$sph_used" ] && continue
         if [ -n "$sph_prev" ]; then
             local sph_delta=$(( (sph_used - sph_prev) / 1024 / 1024 ))
-            local sph_rate=$(( sph_delta / (sph_interval / 60 > 0 ? sph_interval / 60 : 1) ))
-            log_message "heartbeat ${sph_dataset}: +${sph_delta} MiB last ${sph_interval}s (~${sph_rate} MiB/min)"
+            if [ "$sph_delta" -lt 0 ]; then
+                # BUG2b fix: `used` can decrease (snapshots pruned
+                # mid-transfer). That is not negative progress; report
+                # it as no growth rather than a misleading "+-N MiB".
+                log_message "heartbeat ${sph_dataset}: no growth last ${sph_interval}s (used decreased)"
+            else
+                # BUG2a fix: rate must scale by the real interval, not
+                # a divisor clamped to 1 for sub-60s intervals.
+                local sph_rate=$(( sph_delta * 60 / sph_interval ))
+                log_message "heartbeat ${sph_dataset}: +${sph_delta} MiB last ${sph_interval}s (~${sph_rate} MiB/min)"
+            fi
         fi
         sph_prev="$sph_used"
     done
@@ -350,17 +369,21 @@ function run_syncoid_replication {
         return "$FILING_ERROR"
     fi
 
-    # Background progress heartbeat (stopped after syncoid returns).
+    # Background progress heartbeat.
     syncoid_progress_heartbeat "$rsr_host" "$rsr_remote_dataset" 60 &
     local rsr_hb_pid=$!
+
+    # BUG3 fix: reap the heartbeat on EVERY return path. The previous
+    # code only killed it if the explicit kill line was reached, so a
+    # signal-interrupted run left an orphaned ssh-looping process. A
+    # RETURN trap covers normal completion, the failure return, and
+    # any future early exit.
+    trap 'kill "$rsr_hb_pid" 2>/dev/null; wait "$rsr_hb_pid" 2>/dev/null' RETURN
 
     # --no-sync-snap: anchor on existing (sanoid) snapshots with long
     # retention rather than syncoid's own short-lived sync-snaps.
     local rsr_rc=0
     syncoid --no-sync-snap "$rsr_source" "$rsr_dest" || rsr_rc=$?
-
-    kill "$rsr_hb_pid" 2>/dev/null
-    wait "$rsr_hb_pid" 2>/dev/null
 
     if [ "$rsr_rc" -ne 0 ]; then
         report "$rsr_rc" "syncoid replication failed: ${rsr_source} -> ${rsr_dest}"
