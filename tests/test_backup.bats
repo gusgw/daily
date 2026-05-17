@@ -589,3 +589,174 @@ load 'test_helper'
     assert_success
     assert_output --partial "partial transfer"
 }
+
+# =============================================================================
+# Syncoid hardening tests (pool health, stale resume token, --no-sync-snap)
+#
+# These verify that a failed replication run does NOT require manual
+# intervention: a sick pool is refused, a stale resume token is
+# auto-cleared, and the destructive sync-snap fallback is removed.
+# =============================================================================
+
+@test "check_remote_pool_health function exists" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+    run type check_remote_pool_health
+    assert_success
+}
+
+@test "clear_stale_resume_token function exists" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+    run type clear_stale_resume_token
+    assert_success
+}
+
+@test "syncoid_progress_heartbeat function exists" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+    run type syncoid_progress_heartbeat
+    assert_success
+}
+
+@test "check_remote_pool_health succeeds when pool is ONLINE" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ssh() { echo "ONLINE"; return 0; }
+
+    run check_remote_pool_health testhost testpool
+    assert_success
+}
+
+@test "check_remote_pool_health fails when pool is not ONLINE" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ssh() { echo "SUSPENDED"; return 0; }
+
+    run check_remote_pool_health testhost testpool
+    assert_failure
+    assert_output --partial "expected ONLINE"
+}
+
+@test "clear_stale_resume_token is a no-op when no token present" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    # zfs reports "-" when there is no pending resumable receive.
+    ssh() {
+        if [[ "$*" == *receive_resume_token* ]]; then echo "-"; fi
+        return 0
+    }
+    sudo() { echo "SUDO_SHOULD_NOT_RUN" >>"$TEST_TEMP_DIR/calls"; return 0; }
+
+    run clear_stale_resume_token testhost testpool/ds
+    assert_success
+    [ ! -f "$TEST_TEMP_DIR/calls" ]
+}
+
+@test "clear_stale_resume_token clears a stale token automatically" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ssh() {
+        if [[ "$*" == *receive_resume_token* ]]; then
+            echo "1-fake-stale-token"
+        elif [[ "$*" == *"receive -A"* ]]; then
+            echo "RECEIVE_A_CALLED" >>"$TEST_TEMP_DIR/calls"
+        fi
+        return 0
+    }
+    # `zfs send -nvt <token>` dry-run fails => token is stale.
+    sudo() {
+        if [[ "$*" == *"zfs send -nvt"* ]]; then return 1; fi
+        return 0
+    }
+
+    run clear_stale_resume_token testhost testpool/ds
+    assert_success
+    assert_output --partial "stale"
+    [ -f "$TEST_TEMP_DIR/calls" ]
+    grep -q RECEIVE_A_CALLED "$TEST_TEMP_DIR/calls"
+}
+
+@test "clear_stale_resume_token keeps a still-valid token" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ssh() {
+        if [[ "$*" == *receive_resume_token* ]]; then
+            echo "1-fake-valid-token"
+        elif [[ "$*" == *"receive -A"* ]]; then
+            echo "RECEIVE_A_CALLED" >>"$TEST_TEMP_DIR/calls"
+        fi
+        return 0
+    }
+    # `zfs send -nvt <token>` dry-run succeeds => token still valid.
+    sudo() {
+        if [[ "$*" == *"zfs send -nvt"* ]]; then return 0; fi
+        return 0
+    }
+
+    run clear_stale_resume_token testhost testpool/ds
+    assert_success
+    assert_output --partial "still valid"
+    [ ! -f "$TEST_TEMP_DIR/calls" ]
+}
+
+@test "run_syncoid_replication refuses a destination pool that is not ONLINE" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    check_host_reachable() { return 0; }
+    syncoid() { echo "SYNCOID_SHOULD_NOT_RUN" >>"$TEST_TEMP_DIR/calls"; return 0; }
+    ssh() { echo "SUSPENDED"; return 0; }
+
+    run run_syncoid_replication "tank/src" "testhost:testpool/tank/src"
+    assert_failure
+    assert_output --partial "not ONLINE"
+    [ ! -f "$TEST_TEMP_DIR/calls" ]
+}
+
+@test "run_syncoid_replication dry-run uses --no-sync-snap" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    check_host_reachable() { return 0; }
+    syncoid() { return 0; }
+
+    run run_syncoid_replication "tank/src" "testhost:testpool/tank/src" "dry-run"
+    assert_success
+    assert_output --partial "no-sync-snap"
+}

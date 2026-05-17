@@ -149,17 +149,153 @@ function run_all_zfs_local_backups {
 #   SYNCOID REPLICATION FUNCTIONS
 # =============================================================================
 
+function check_remote_pool_health {
+    # Verify a remote ZFS pool is ONLINE before replicating into it.
+    #
+    # A pool that is SUSPENDED or otherwise not ONLINE makes syncoid
+    # misread the destination as empty and fall back to a destructive
+    # full send. Replication into such a pool must be refused.
+    #
+    # Arguments:
+    #   $1 - Remote host (SSH config entry / alias)
+    #   $2 - Pool name on the remote host
+    #
+    # Returns:
+    #   0 - Pool is ONLINE
+    #   Non-zero - Pool is not ONLINE, unreachable, or query failed
+
+    local crph_host="${1:-}"
+    local crph_pool="${2:-}"
+
+    not_empty "remote pool health host" "$crph_host"
+    not_empty "remote pool health pool" "$crph_pool"
+
+    local crph_health
+    crph_health=$(ssh -o BatchMode=yes "$crph_host" \
+        "sudo zpool list -H -o health ${crph_pool}" 2>/dev/null)
+
+    if [ "$crph_health" = "ONLINE" ]; then
+        log_setting "remote pool ${crph_pool} health" "ONLINE"
+        return 0
+    fi
+
+    log_message "remote pool ${crph_pool} on ${crph_host} health is '${crph_health:-unknown}' (expected ONLINE)"
+    return "$NETWORK_ERROR"
+}
+
+function clear_stale_resume_token {
+    # Detect and clear an unusable resumable-receive token on the
+    # destination dataset.
+    #
+    # When a previous send is interrupted, `zfs receive -s` leaves a
+    # resume token on the destination. If the source snapshot that
+    # token references is later pruned, every subsequent run tries
+    # `zfs send -t <token>` and fails forever ("incremental source
+    # ... no longer exists"). This is self-perpetuating and the most
+    # common cause of repeated replication failure.
+    #
+    # This function validates the token non-destructively with a
+    # `zfs send -nvt` dry-run on the source:
+    #   - resumable -> leave it (syncoid resumes efficiently)
+    #   - stale     -> `zfs receive -A` clears it so the next run
+    #                  performs a clean incremental
+    #
+    # Arguments:
+    #   $1 - Remote host
+    #   $2 - Remote dataset (pool/path)
+    #
+    # Returns:
+    #   0 - No token, token resumable, or stale token successfully cleared
+    #   Non-zero - Token present and stale and could not be cleared
+
+    local csrt_host="${1:-}"
+    local csrt_dataset="${2:-}"
+
+    not_empty "resume token host" "$csrt_host"
+    not_empty "resume token dataset" "$csrt_dataset"
+
+    local csrt_token
+    csrt_token=$(ssh -o BatchMode=yes "$csrt_host" \
+        "sudo zfs get -H -o value receive_resume_token ${csrt_dataset}" 2>/dev/null)
+
+    if [ -z "$csrt_token" ] || [ "$csrt_token" = "-" ]; then
+        # No pending resumable receive: nothing to do.
+        return 0
+    fi
+
+    log_message "destination ${csrt_dataset} has a resume token; validating"
+
+    # Non-destructive: -n (dry-run) -v (verbose) -t (resume token).
+    # Succeeds only if the referenced source snapshot still exists.
+    if sudo zfs send -nvt "$csrt_token" >/dev/null 2>&1; then
+        log_message "resume token for ${csrt_dataset} is still valid; keeping it"
+        return 0
+    fi
+
+    log_message "resume token for ${csrt_dataset} is stale; clearing it"
+    if ssh -o BatchMode=yes "$csrt_host" \
+            "sudo zfs receive -A ${csrt_dataset}" 2>/dev/null; then
+        log_message "stale resume token for ${csrt_dataset} cleared"
+        return 0
+    fi
+
+    report "$FILING_ERROR" "could not clear stale resume token for ${csrt_dataset}"
+    return "$FILING_ERROR"
+}
+
+function syncoid_progress_heartbeat {
+    # Background heartbeat: log destination growth at a fixed interval
+    # so progress is visible and greppable regardless of syncoid's own
+    # verbosity. Without this, a multi-gigabyte transfer over a slow
+    # link is silent and indistinguishable from a hang.
+    #
+    # Arguments:
+    #   $1 - Remote host
+    #   $2 - Remote dataset (pool/path)
+    #   $3 - Interval seconds (optional, default 60)
+    #
+    # Intended to be started with & and stopped by killing its PID.
+
+    local sph_host="${1:-}"
+    local sph_dataset="${2:-}"
+    local sph_interval="${3:-60}"
+
+    local sph_prev=""
+    local sph_used
+    while true; do
+        sleep "$sph_interval"
+        sph_used=$(ssh -o BatchMode=yes "$sph_host" \
+            "sudo zfs get -Hp -o value used ${sph_dataset}" 2>/dev/null)
+        [ -z "$sph_used" ] && continue
+        if [ -n "$sph_prev" ]; then
+            local sph_delta=$(( (sph_used - sph_prev) / 1024 / 1024 ))
+            local sph_rate=$(( sph_delta / (sph_interval / 60 > 0 ? sph_interval / 60 : 1) ))
+            log_message "heartbeat ${sph_dataset}: +${sph_delta} MiB last ${sph_interval}s (~${sph_rate} MiB/min)"
+        fi
+        sph_prev="$sph_used"
+    done
+}
+
 function run_syncoid_replication {
-    # Run syncoid replication to a remote host
+    # Run syncoid replication to a remote host.
+    #
+    # Hardened so that a failed run never requires manual intervention:
+    #   1. Refuse if the destination pool is not ONLINE.
+    #   2. Auto-clear a stale resumable-receive token (the recurring
+    #      failure mode) so the next send is a clean incremental.
+    #   3. --no-sync-snap: anchor on long-retention sanoid snapshots,
+    #      not on syncoid sync-snaps that get pruned (which previously
+    #      caused a destructive full send from a year-old snapshot).
+    #   4. A background heartbeat logs real progress.
     #
     # Arguments:
     #   $1 - Source dataset (e.g., "pool/data")
-    #   $2 - Destination in user@host:dataset format
+    #   $2 - Destination in host:dataset format
     #   $3 - (optional) "dry-run" to preview without making changes
     #
     # Returns:
-    #   0 - Replication completed successfully
-    #   Non-zero - Replication failed or skipped
+    #   0 - Replication completed successfully (or skipped: host down)
+    #   Non-zero - Replication failed or refused
 
     local rsr_source="${1:-}"
     local rsr_dest="${2:-}"
@@ -183,28 +319,53 @@ function run_syncoid_replication {
         return "$MISSING_FILE"
     fi
 
-    # Parse destination to extract host
+    # Parse destination into host and remote dataset
     local rsr_host="${rsr_dest%%:*}"
+    local rsr_remote_dataset="${rsr_dest#*:}"
+    local rsr_remote_pool="${rsr_remote_dataset%%/*}"
 
     # Check if host is reachable
     if ! check_host_reachable "$rsr_host"; then
         log_message "skipping replication - host ${rsr_host} not reachable"
-        return 0  # Not an error, just skipped
+        return 0  # Transient: not an error, just skipped this run
     fi
 
     # Dry-run mode: show what would be done (syncoid has no dry-run option)
     if [ "$rsr_dry_run" = "dry-run" ]; then
-        log_message "[DRY-RUN] would run: syncoid ${rsr_source} ${rsr_dest}"
+        log_message "[DRY-RUN] would run: syncoid --no-sync-snap ${rsr_source} ${rsr_dest}"
         return 0
     fi
 
-    # Run syncoid (uses sudo on both local and remote for ZFS operations)
-    # --quiet suppresses progress bars (which are imprecise for small sends)
-    syncoid --quiet "$rsr_source" "$rsr_dest" || {
-        local rc=$?
-        report "$rc" "syncoid replication failed: ${rsr_source} -> ${rsr_dest}"
-        return "$rc"
-    }
+    # Refuse to replicate into a pool that is not ONLINE: doing so
+    # makes syncoid fall back to a destructive full send.
+    if ! check_remote_pool_health "$rsr_host" "$rsr_remote_pool"; then
+        report "$NETWORK_ERROR" "skipping replication - ${rsr_remote_pool} not ONLINE on ${rsr_host}"
+        return "$NETWORK_ERROR"
+    fi
+
+    # Self-heal: clear an unusable resume token so this run does a
+    # clean incremental instead of failing on a dead token forever.
+    if ! clear_stale_resume_token "$rsr_host" "$rsr_remote_dataset"; then
+        report "$FILING_ERROR" "could not prepare destination ${rsr_remote_dataset}"
+        return "$FILING_ERROR"
+    fi
+
+    # Background progress heartbeat (stopped after syncoid returns).
+    syncoid_progress_heartbeat "$rsr_host" "$rsr_remote_dataset" 60 &
+    local rsr_hb_pid=$!
+
+    # --no-sync-snap: anchor on existing (sanoid) snapshots with long
+    # retention rather than syncoid's own short-lived sync-snaps.
+    local rsr_rc=0
+    syncoid --no-sync-snap "$rsr_source" "$rsr_dest" || rsr_rc=$?
+
+    kill "$rsr_hb_pid" 2>/dev/null
+    wait "$rsr_hb_pid" 2>/dev/null
+
+    if [ "$rsr_rc" -ne 0 ]; then
+        report "$rsr_rc" "syncoid replication failed: ${rsr_source} -> ${rsr_dest}"
+        return "$rsr_rc"
+    fi
 
     log_message "syncoid completed: ${rsr_source} -> ${rsr_dest}"
     return 0
