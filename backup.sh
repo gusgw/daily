@@ -480,10 +480,24 @@ function prepare_root_mount {
         return 1
     fi
 
-    # Already mounted - nothing to do
+    # Already mounted - but verify it is the RIGHT dataset.
+    #
+    # BUG-C fix: previously any filesystem mounted at /mnt/root was
+    # accepted, so a stale or wrong dataset (e.g. the other external
+    # pool) would cause run_root_backup to rsync the system root into
+    # the wrong destination - a silent wrong-target backup. Require
+    # the mounted source to be exactly ROOT_BACKUP_DATASET.
     if mountpoint -q /mnt/root 2>/dev/null; then
-        log_message "prepare_root_mount: /mnt/root is already mounted"
-        return 0
+        local prm_mounted_src
+        prm_mounted_src=$(findmnt -n -o SOURCE /mnt/root 2>/dev/null)
+        if [ "$prm_mounted_src" = "$ROOT_BACKUP_DATASET" ]; then
+            log_message "prepare_root_mount: /mnt/root is already mounted (${ROOT_BACKUP_DATASET})"
+            return 0
+        fi
+        log_message "prepare_root_mount: FAILED - /mnt/root has the wrong" \
+                    "filesystem mounted: '${prm_mounted_src:-unknown}'" \
+                    "(expected ${ROOT_BACKUP_DATASET})"
+        return 1
     fi
 
     log_message "prepare_root_mount: /mnt/root is not currently mounted"

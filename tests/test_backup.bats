@@ -954,7 +954,7 @@ load 'test_helper'
     assert_output --partial "not configured"
 }
 
-@test "prepare_root_mount succeeds and is a no-op when /mnt/root already mounted" {
+@test "prepare_root_mount is a no-op when the CORRECT dataset is already mounted" {
     source_project_file "bump/bump.sh"
     set_stamp
     source_project_file "settings.sh"
@@ -963,7 +963,8 @@ load 'test_helper'
 
     ROOT_BACKUP_POOL="silver"
     ROOT_BACKUP_DATASET="silver/clovis/root"
-    mountpoint() { return 0; }   # already mounted
+    mountpoint() { return 0; }                          # already mounted
+    findmnt() { echo "silver/clovis/root"; return 0; }  # ...the right dataset
 
     run prepare_root_mount
     assert_success
