@@ -25,6 +25,33 @@ setup() {
         source "${PROJECT_DIR}/env.sh"
     fi
 
+    # --- CRITICAL: test-isolation safety net ---
+    #
+    # env.sh exports the OPERATOR'S REAL backup targets (real datasets,
+    # the real remote host, real drive configs). settings.sh, sourced
+    # later by each test, builds the live SYNCOID_TARGETS /
+    # ZFS_BACKUP_TARGETS from these strings. A test that then calls a
+    # high-level entry point (e.g. run_all_backups) without explicitly
+    # isolating itself would perform a REAL multi-gigabyte replication
+    # to the real host, bypassing daily.sh's lock - which has corrupted
+    # production backups and saturated the network.
+    #
+    # Neutralise the target-defining strings AFTER env.sh is sourced
+    # and BEFORE any test sources settings.sh. settings.sh then builds
+    # EMPTY/placeholder targets, so a forgotten isolation step
+    # exercises safe early-return paths instead of a real backup. Tests
+    # that need specific values set them explicitly and so override
+    # these. This makes "forgot to isolate" harmless instead of
+    # catastrophic.
+    export SYNCOID_DATASETS=""
+    export ZFS_BACKUP_TARGETS=""
+    export CLOUD_SYNCS=""
+    export SYNCOID_REMOTE_HOST="invalid.test"
+    export SYNCOID_REMOTE_POOL="testpool"
+    export ROOT_BACKUP_POOL="testpool"
+    export ROOT_BACKUP_CONFIG="testconfig"
+    export ROOT_BACKUP_DATASET="testpool/test/root"
+
     # Set a predictable timestamp for testing
     export STAMP="20260125T120000-test"
 
