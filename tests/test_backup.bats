@@ -930,3 +930,203 @@ load 'test_helper'
     # Must not log a negative delta like "+-50 MiB".
     refute_output --partial "+-"
 }
+
+# =============================================================================
+# prepare_root_mount coverage (kcov: 0/48 lines - entirely untested).
+# The suite never gets past the drive-not-connected early return; these
+# exercise the early-return branches and, via the "pool already
+# imported" path, the keystatus / mount / final-check body.
+# These pass against the current code.
+# =============================================================================
+
+@test "prepare_root_mount fails when root backup is not configured" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ROOT_BACKUP_POOL=""
+    ROOT_BACKUP_DATASET=""
+
+    run prepare_root_mount
+    assert_failure
+    assert_output --partial "not configured"
+}
+
+@test "prepare_root_mount succeeds and is a no-op when /mnt/root already mounted" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ROOT_BACKUP_POOL="silver"
+    ROOT_BACKUP_DATASET="silver/clovis/root"
+    mountpoint() { return 0; }   # already mounted
+
+    run prepare_root_mount
+    assert_success
+    assert_output --partial "already mounted"
+}
+
+@test "prepare_root_mount fails when pool config file is missing" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ROOT_BACKUP_POOL="silver"
+    ROOT_BACKUP_DATASET="silver/clovis/root"
+    ROOT_BACKUP_CONFIG="doesnotexist"
+    BACKUP_CONFIGS_DIR="$TEST_TEMP_DIR"
+    mountpoint() { return 1; }   # not mounted
+    zpool() { return 1; }        # pool not imported
+
+    run prepare_root_mount
+    assert_failure
+    assert_output --partial "config file not found"
+}
+
+@test "prepare_root_mount fails when config has no BACKUP_DRIVE_ID" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ROOT_BACKUP_POOL="silver"
+    ROOT_BACKUP_DATASET="silver/clovis/root"
+    ROOT_BACKUP_CONFIG="silver"
+    BACKUP_CONFIGS_DIR="$TEST_TEMP_DIR"
+    echo 'SOME_OTHER_SETTING="x"' > "$TEST_TEMP_DIR/silver.conf"
+    mountpoint() { return 1; }
+    zpool() { return 1; }
+
+    run prepare_root_mount
+    assert_failure
+    assert_output --partial "no BACKUP_DRIVE_ID"
+}
+
+@test "prepare_root_mount fails when the backup drive is not connected" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ROOT_BACKUP_POOL="silver"
+    ROOT_BACKUP_DATASET="silver/clovis/root"
+    ROOT_BACKUP_CONFIG="silver"
+    BACKUP_CONFIGS_DIR="$TEST_TEMP_DIR"
+    echo 'BACKUP_DRIVE_ID="usb-NoSuchDrive_000-0:0"' > "$TEST_TEMP_DIR/silver.conf"
+    mountpoint() { return 1; }
+    zpool() { return 1; }
+
+    run prepare_root_mount
+    assert_failure
+    assert_output --partial "drive not connected"
+}
+
+@test "prepare_root_mount mounts via the already-imported-pool path" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ROOT_BACKUP_POOL="silver"
+    ROOT_BACKUP_DATASET="silver/clovis/root"
+
+    # mountpoint: not mounted, not mounted, then mounted (after zfs mount)
+    local mpc="$TEST_TEMP_DIR/mpc"; echo 0 > "$mpc"
+    mountpoint() {
+        local n; n=$(cat "$mpc"); echo $((n + 1)) > "$mpc"
+        [ "$n" -ge 2 ] && return 0 || return 1
+    }
+    zpool() { return 0; }   # pool already imported -> skips drive block
+    sudo() {
+        if [[ "$*" == *"keystatus"* ]]; then echo "available"; return 0; fi
+        if [[ "$*" == *"zfs mount"* ]]; then return 0; fi
+        return 0
+    }
+
+    run prepare_root_mount
+    assert_success
+    assert_output --partial "SUCCESS"
+}
+
+@test "prepare_root_mount fails when zfs load-key fails" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ROOT_BACKUP_POOL="silver"
+    ROOT_BACKUP_DATASET="silver/clovis/root"
+    mountpoint() { return 1; }
+    zpool() { return 0; }
+    sudo() {
+        if [[ "$*" == *"keystatus"* ]]; then echo "unavailable"; return 0; fi
+        if [[ "$*" == *"load-key"* ]]; then return 1; fi
+        return 0
+    }
+
+    run prepare_root_mount
+    assert_failure
+    assert_output --partial "load-key"
+}
+
+@test "prepare_root_mount fails when zfs mount fails" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ROOT_BACKUP_POOL="silver"
+    ROOT_BACKUP_DATASET="silver/clovis/root"
+    mountpoint() { return 1; }   # never becomes mounted
+    zpool() { return 0; }
+    sudo() {
+        if [[ "$*" == *"keystatus"* ]]; then echo "available"; return 0; fi
+        if [[ "$*" == *"zfs mount"* ]]; then return 1; fi
+        return 0
+    }
+
+    run prepare_root_mount
+    assert_failure
+    assert_output --partial "zfs mount"
+}
+
+# =============================================================================
+# Bug-documenting test (EXPECTED TO FAIL against current code; fixed in
+# the follow-up commit).
+#
+#   BUG-C  prepare_root_mount treats ANY filesystem mounted at /mnt/root
+#          as success. It never verifies the mounted source is
+#          ROOT_BACKUP_DATASET, so a stale/wrong dataset mounted there
+#          causes run_root_backup to rsync the system root into the
+#          wrong destination - a silent wrong-target backup.
+# =============================================================================
+
+@test "BUG-C: prepare_root_mount must reject a wrong dataset mounted at /mnt/root" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ROOT_BACKUP_POOL="silver"
+    ROOT_BACKUP_DATASET="silver/clovis/root"
+
+    mountpoint() { return 0; }                       # something IS mounted
+    findmnt() { echo "georg/clovis/root"; return 0; } # ...but the WRONG dataset
+
+    run prepare_root_mount
+    # Correct behaviour: the mounted source is not ROOT_BACKUP_DATASET,
+    # so this must NOT report success.
+    assert_failure
+}
