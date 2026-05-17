@@ -760,3 +760,173 @@ load 'test_helper'
     assert_success
     assert_output --partial "no-sync-snap"
 }
+
+# =============================================================================
+# Additional coverage of correct behaviour (these pass against current code)
+# =============================================================================
+
+@test "clear_stale_resume_token reports when 'zfs receive -A' itself fails" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ssh() {
+        if [[ "$*" == *receive_resume_token* ]]; then
+            echo "1-fake-stale-token"
+            return 0
+        elif [[ "$*" == *"receive -A"* ]]; then
+            return 1   # clearing the token fails
+        fi
+        return 0
+    }
+    sudo() {
+        if [[ "$*" == *"zfs send -nvt"* ]]; then return 1; fi  # stale
+        return 0
+    }
+
+    run clear_stale_resume_token testhost testpool/ds
+    assert_failure
+    assert_output --partial "could not clear stale resume token"
+}
+
+@test "run_syncoid_replication skips when host is unreachable" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    syncoid() { echo "SYNCOID_RAN" >>"$TEST_TEMP_DIR/calls"; return 0; }
+    check_host_reachable() { return 1; }
+
+    run run_syncoid_replication "tank/src" "testhost:testpool/tank/src"
+    assert_success
+    assert_output --partial "not reachable"
+    [ ! -f "$TEST_TEMP_DIR/calls" ]
+}
+
+@test "run_syncoid_replication aborts if destination cannot be prepared" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    check_host_reachable() { return 0; }
+    syncoid() { echo "SYNCOID_RAN" >>"$TEST_TEMP_DIR/calls"; return 0; }
+    # Pool query => ONLINE; token query => a token; receive -A => fails.
+    ssh() {
+        if [[ "$*" == *"zpool list"* ]]; then echo "ONLINE"; return 0; fi
+        if [[ "$*" == *receive_resume_token* ]]; then echo "1-tok"; return 0; fi
+        if [[ "$*" == *"receive -A"* ]]; then return 1; fi
+        return 0
+    }
+    sudo() {
+        if [[ "$*" == *"zfs send -nvt"* ]]; then return 1; fi  # stale token
+        return 0
+    }
+
+    run run_syncoid_replication "tank/src" "testhost:testpool/tank/src"
+    assert_failure
+    assert_output --partial "could not prepare destination"
+    [ ! -f "$TEST_TEMP_DIR/calls" ]
+}
+
+# =============================================================================
+# Bug-documenting tests.
+#
+# These assert the CORRECT behaviour and are EXPECTED TO FAIL against the
+# current backup.sh. They are landed first (this commit) so the defect is
+# on the record; the follow-up commit fixes backup.sh and turns them green.
+#
+#   BUG 1  clear_stale_resume_token: an ssh failure while querying the
+#          token is silently treated as "no token" and the function
+#          returns success, so a real stale token is never cleared and
+#          the recurring replication failure is not healed.
+#
+#   BUG 2  syncoid_progress_heartbeat: the MiB/min rate is wrong for any
+#          interval < 60s (divisor clamps to 1), and a decrease in
+#          `used` (snapshot pruning mid-transfer) is logged as negative
+#          "progress" instead of being floored to zero.
+# =============================================================================
+
+@test "BUG1: clear_stale_resume_token fails (not silent success) when ssh query fails" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    # ssh cannot reach the host to read the token: non-zero, no output.
+    ssh() { return 255; }
+    sudo() { return 0; }
+
+    run clear_stale_resume_token testhost testpool/ds
+    # Correct behaviour: cannot determine token state => do NOT claim
+    # success; signal the caller to skip this dataset this run.
+    assert_failure
+}
+
+@test "BUG2a: syncoid_progress_heartbeat reports correct MiB/min for a 30s interval" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    # Make the loop iterate fast while still passing interval=30 to the
+    # rate maths: override sleep so iterations are sub-second.
+    sleep() { command sleep 0.3; }
+
+    # Two readings 0 -> 60 MiB; with interval=30 the correct rate is
+    # 60 MiB / 30s = 120 MiB/min.
+    local counter="$TEST_TEMP_DIR/n"
+    echo 0 >"$counter"
+    ssh() {
+        local n; n=$(cat "$counter"); echo $((n + 1)) >"$counter"
+        if [ "$n" -eq 0 ]; then echo 0; else echo $((60 * 1024 * 1024)); fi
+        return 0
+    }
+
+    syncoid_progress_heartbeat testhost testpool/ds 30 \
+        >"$TEST_TEMP_DIR/hb.log" 2>&1 &
+    local hb=$!
+    command sleep 2
+    kill "$hb" 2>/dev/null || true
+    wait "$hb" 2>/dev/null || true
+
+    run cat "$TEST_TEMP_DIR/hb.log"
+    assert_output --partial "120 MiB/min"
+}
+
+@test "BUG2b: syncoid_progress_heartbeat does not report negative progress" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    sleep() { command sleep 0.3; }
+
+    # used decreases (snapshots pruned mid-transfer): 100 MiB -> 50 MiB.
+    local counter="$TEST_TEMP_DIR/n"
+    echo 0 >"$counter"
+    ssh() {
+        local n; n=$(cat "$counter"); echo $((n + 1)) >"$counter"
+        if [ "$n" -eq 0 ]; then echo $((100 * 1024 * 1024)); else echo $((50 * 1024 * 1024)); fi
+        return 0
+    }
+
+    syncoid_progress_heartbeat testhost testpool/ds 1 \
+        >"$TEST_TEMP_DIR/hb.log" 2>&1 &
+    local hb=$!
+    command sleep 2
+    kill "$hb" 2>/dev/null || true
+    wait "$hb" 2>/dev/null || true
+
+    run cat "$TEST_TEMP_DIR/hb.log"
+    # Must not log a negative delta like "+-50 MiB".
+    refute_output --partial "+-"
+}
