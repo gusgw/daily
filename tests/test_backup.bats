@@ -1131,3 +1131,224 @@ load 'test_helper'
     # so this must NOT report success.
     assert_failure
 }
+
+# =============================================================================
+# run_zfs_local_backup / run_all_zfs_local_backups / run_root_backup /
+# run_all_backups coverage. These pass against the current code.
+# =============================================================================
+
+@test "run_zfs_local_backup dry-run does not invoke zbackup" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    zbackup() { echo "ZBACKUP_RAN" >>"$TEST_TEMP_DIR/calls"; return 0; }
+
+    run run_zfs_local_backup "silver" "dry-run"
+    assert_success
+    assert_output --partial "would run: zbackup --config silver"
+    [ ! -f "$TEST_TEMP_DIR/calls" ]
+}
+
+@test "run_all_zfs_local_backups dry-run iterates targets without running zbackup" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ZFS_BACKUP_TARGETS=("silver")
+    zbackup() { echo "ZBACKUP_RAN" >>"$TEST_TEMP_DIR/calls"; return 0; }
+
+    run run_all_zfs_local_backups "dry-run"
+    assert_success
+    assert_output --partial "[DRY-RUN]"
+    assert_output --partial "processing ZFS backup target: silver"
+    [ ! -f "$TEST_TEMP_DIR/calls" ]
+}
+
+@test "run_root_backup reports failure when rbackup fails with a non-23 code" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    rbackup() { return 5; }
+    mountpoint() { return 0; }            # /mnt/root mounted -> proceeds
+
+    run run_root_backup
+    assert_failure
+    assert_output --partial "rbackup failed"
+}
+
+# =============================================================================
+#   BUG-E (EXPECTED TO FAIL against current code; fixed in follow-up).
+#
+#   bump's log_message uses only "$1" (echo "${STAMP}: ${lm_message}").
+#   Every `log_message "msg" "detail"` call therefore discards the
+#   detail. run_root_backup computes a pool diagnostic (keystatus,
+#   mountpoint, mounted) and passes it as the SECOND argument, so it is
+#   never actually logged - exactly the information needed to see why a
+#   root backup was skipped is silently dropped.
+#
+#   Fix is scoped to backup.sh call sites (combine into one string);
+#   bump is a shared submodule and is not changed here.
+# =============================================================================
+
+@test "BUG-E: run_root_backup actually logs pool diagnostics when /mnt/root not mounted" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ROOT_BACKUP_POOL="silver"
+    ROOT_BACKUP_DATASET="silver/clovis/root"
+    rbackup() { return 0; }
+    mountpoint() { return 1; }            # not mounted
+    zpool() { return 0; }                 # pool imported -> diagnostic branch
+    sudo() {
+        if [[ "$*" == *"keystatus"* ]]; then echo "available"; return 0; fi
+        if [[ "$*" == *"mountpoint"* ]]; then echo "/mnt/root"; return 0; fi
+        if [[ "$*" == *"mounted"* ]]; then echo "no"; return 0; fi
+        return 0
+    }
+
+    run run_root_backup
+    assert_success
+    assert_output --partial "SKIPPED"
+    # The pool diagnostic must reach the log, not be dropped as $2.
+    assert_output --partial "keystatus="
+}
+
+@test "run_all_backups dry-run runs all phases and reports clean" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    run_root_backup() { return 0; }
+    run_all_zfs_local_backups() { return 0; }
+    run_all_syncoid_backups() { return 0; }
+
+    run run_all_backups "dry-run"
+    assert_success
+    assert_output --partial "[DRY-RUN] run_all_backups"
+    assert_output --partial "=== Root backup ==="
+    assert_output --partial "=== Local ZFS backups ==="
+    assert_output --partial "=== Syncoid replication ==="
+    assert_output --partial "backup checks complete"
+}
+
+# =============================================================================
+# Bug-documenting tests (EXPECTED TO FAIL against current code; fixed in
+# the follow-up commit).
+#
+#   BUG-D  run_all_zfs_local_backups and run_all_syncoid_backups return 0
+#          unconditionally, even when every sub-backup failed. As a
+#          result run_all_backups' error counter never increments for
+#          those phases and the run summary logs "backup checks
+#          complete" while local ZFS and syncoid backups have silently
+#          failed.
+# =============================================================================
+
+@test "BUG-D1: run_all_zfs_local_backups returns non-zero when a target fails" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ZFS_BACKUP_TARGETS=("silver")
+    zbackup() { return 1; }   # the backup fails
+
+    run run_all_zfs_local_backups
+    # A failed sub-backup must be visible to the caller as non-zero,
+    # so the run summary can report it (the run still continues).
+    assert_failure
+}
+
+@test "BUG-D2: run_all_backups summary reports errors when a phase fails" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    # Only the local-ZFS phase fails; the real run_all_zfs_local_backups
+    # is exercised (a failing zbackup) so the bug is reproduced
+    # end-to-end rather than stubbed away.
+    run_root_backup() { return 0; }
+    run_all_syncoid_backups() { return 0; }
+    ZFS_BACKUP_TARGETS=("silver")
+    zbackup() { return 1; }
+
+    run run_all_backups
+    assert_success    # run_all_backups itself never aborts
+    assert_output --partial "error(s)"
+}
+
+# =============================================================================
+# SKIP-vs-FAIL classification (EXPECTED TO FAIL against current code;
+# implemented in the follow-up commit).
+#
+# A destination that is simply absent (drive not plugged in, mount
+# missing, host down) is NOT a failure. It must be logged as SKIPPED,
+# not counted as an error, and the routine must keep going. Only a
+# genuine failure (a backup that should have worked) counts as an
+# error in the summary. zbackup exits MISSING_DISK (63) when the
+# external drive is not connected.
+# =============================================================================
+
+@test "SKIP1: run_zfs_local_backup treats a not-connected drive as skipped" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    zbackup() { return 63; }   # MISSING_DISK: drive not connected
+
+    run run_zfs_local_backup "silver"
+    # Must be reported as skipped, not as a backup failure.
+    assert_output --partial "skipped"
+    refute_output --partial "zbackup failed"
+}
+
+@test "SKIP2: run_all_zfs_local_backups does not count a skipped drive as failed" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    ZFS_BACKUP_TARGETS=("silver")
+    zbackup() { return 63; }   # MISSING_DISK
+
+    run run_all_zfs_local_backups
+    assert_success   # a skip is not an error -> helper returns 0
+    assert_output --partial "skipped"
+    refute_output --partial "ZFS backup(s) failed"
+}
+
+@test "SKIP3: run_all_backups summary distinguishes skipped from failed" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "settings.sh"
+    source_project_file "network.sh"
+    source_project_file "backup.sh"
+
+    run_root_backup() { return 0; }
+    run_all_syncoid_backups() { return 0; }
+    ZFS_BACKUP_TARGETS=("silver")
+    zbackup() { return 63; }   # MISSING_DISK -> skipped, not an error
+
+    run run_all_backups
+    assert_success
+    assert_output --partial "skip"
+    refute_output --partial "error(s)"
+}
