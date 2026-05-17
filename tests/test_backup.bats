@@ -802,7 +802,11 @@ load 'test_helper'
     check_host_reachable() { return 1; }
 
     run run_syncoid_replication "tank/src" "testhost:testpool/tank/src"
-    assert_success
+    # Updated for the skip/fail classification: an unreachable host is
+    # now a distinct SKIP outcome (BACKUP_SKIPPED), not plain success,
+    # so the run summary can report ok/skipped/failed accurately. The
+    # run still does not invoke syncoid and still continues.
+    [ "$status" -eq "$BACKUP_SKIPPED" ]
     assert_output --partial "not reachable"
     [ ! -f "$TEST_TEMP_DIR/calls" ]
 }

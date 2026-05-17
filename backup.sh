@@ -21,6 +21,13 @@
 #   Remote ZFS replication uses syncoid (part of sanoid package)
 #   Root filesystem backup uses rbackup script for rsync to /mnt/root
 
+# A single backup unit returns BACKUP_SKIPPED when its destination is
+# merely absent (drive not connected, mount missing, host unreachable).
+# This is NOT a failure: it is logged as skipped, not counted as an
+# error in the run summary, and the routine continues. It is distinct
+# from every code in bump/return_codes.sh.
+BACKUP_SKIPPED=75
+
 # =============================================================================
 #   DRIVE DETECTION
 # =============================================================================
@@ -97,8 +104,18 @@ function run_zfs_local_backup {
     # Run zbackup - it handles drive detection and pool import/export
     zbackup --config "$rzlb_config" || {
         local rc=$?
-        report "$rc" "zbackup failed for ${rzlb_config}"
-        return "$rc"
+        # A destination that is merely absent is a SKIP, not a
+        # failure: keep going, do not count it as an error.
+        case "$rc" in
+            "$MISSING_DISK"|"$MISSING_MOUNT"|"$MISSING_FOLDER")
+                log_message "run_zfs_local_backup: ${rzlb_config} skipped - destination not available (code ${rc})"
+                return "$BACKUP_SKIPPED"
+                ;;
+            *)
+                report "$rc" "zbackup failed for ${rzlb_config}"
+                return "$rc"
+                ;;
+        esac
     }
 
     log_message "zbackup completed for ${rzlb_config}"
@@ -128,21 +145,29 @@ function run_all_zfs_local_backups {
         return 0
     fi
 
+    local razlb_ok=0
+    local razlb_skipped=0
     local razlb_failed=0
 
     for config in "${ZFS_BACKUP_TARGETS[@]}"; do
         log_message "processing ZFS backup target: ${config}"
 
-        if ! run_zfs_local_backup "$config" "$razlb_dry_run"; then
-            razlb_failed=$((razlb_failed + 1))
-        fi
+        local razlb_rc=0
+        run_zfs_local_backup "$config" "$razlb_dry_run" || razlb_rc=$?
+        case "$razlb_rc" in
+            0)                 razlb_ok=$((razlb_ok + 1)) ;;
+            "$BACKUP_SKIPPED") razlb_skipped=$((razlb_skipped + 1)) ;;
+            *)                 razlb_failed=$((razlb_failed + 1)) ;;
+        esac
     done
 
-    if [ "$razlb_failed" -gt 0 ]; then
-        log_message "${razlb_failed} ZFS backup(s) failed"
-    fi
+    log_message "ZFS backups: ${razlb_ok} ok, ${razlb_skipped} skipped, ${razlb_failed} failed"
 
-    return 0  # Don't fail the whole run for individual failures
+    # Continue the run regardless (caller only logs, never aborts),
+    # but report a real failure so the summary is truthful. A skip is
+    # not a failure.
+    [ "$razlb_failed" -gt 0 ] && return 1
+    return 0
 }
 
 # =============================================================================
@@ -343,10 +368,11 @@ function run_syncoid_replication {
     local rsr_remote_dataset="${rsr_dest#*:}"
     local rsr_remote_pool="${rsr_remote_dataset%%/*}"
 
-    # Check if host is reachable
+    # Check if host is reachable. An unreachable host is a SKIP, not a
+    # failure: logged, not counted as an error, the run continues.
     if ! check_host_reachable "$rsr_host"; then
         log_message "skipping replication - host ${rsr_host} not reachable"
-        return 0  # Transient: not an error, just skipped this run
+        return "$BACKUP_SKIPPED"
     fi
 
     # Dry-run mode: show what would be done (syncoid has no dry-run option)
@@ -432,6 +458,8 @@ function run_all_syncoid_backups {
     log_setting "syncoid remote host" "$SYNCOID_REMOTE_HOST"
     log_setting "syncoid remote pool" "$SYNCOID_REMOTE_POOL"
 
+    local rasb_ok=0
+    local rasb_skipped=0
     local rasb_failed=0
 
     for source in "${SYNCOID_TARGETS[@]}"; do
@@ -440,16 +468,22 @@ function run_all_syncoid_backups {
 
         log_message "processing syncoid target: ${source} -> ${dest}"
 
-        if ! run_syncoid_replication "$source" "$dest" "$rasb_dry_run"; then
-            rasb_failed=$((rasb_failed + 1))
-        fi
+        local rasb_rc=0
+        run_syncoid_replication "$source" "$dest" "$rasb_dry_run" || rasb_rc=$?
+        case "$rasb_rc" in
+            0)                 rasb_ok=$((rasb_ok + 1)) ;;
+            "$BACKUP_SKIPPED") rasb_skipped=$((rasb_skipped + 1)) ;;
+            *)                 rasb_failed=$((rasb_failed + 1)) ;;
+        esac
     done
 
-    if [ "$rasb_failed" -gt 0 ]; then
-        log_message "${rasb_failed} syncoid replication(s) failed"
-    fi
+    log_message "syncoid: ${rasb_ok} ok, ${rasb_skipped} skipped, ${rasb_failed} failed"
 
-    return 0  # Don't fail the whole run for individual failures
+    # Continue the run regardless, but report a real failure so the
+    # summary is truthful. A skipped (host down) target is not a
+    # failure.
+    [ "$rasb_failed" -gt 0 ] && return 1
+    return 0
 }
 
 # =============================================================================
@@ -469,14 +503,11 @@ function prepare_root_mount {
     #   0 - /mnt/root is mounted (or was successfully mounted)
     #   1 - Could not mount /mnt/root or root backup not configured
 
-    log_message "prepare_root_mount: ROOT_BACKUP_POOL=${ROOT_BACKUP_POOL:-<unset>}" \
-                "ROOT_BACKUP_CONFIG=${ROOT_BACKUP_CONFIG:-<unset>}" \
-                "ROOT_BACKUP_DATASET=${ROOT_BACKUP_DATASET:-<unset>}"
+    log_message "prepare_root_mount: ROOT_BACKUP_POOL=${ROOT_BACKUP_POOL:-<unset>} ROOT_BACKUP_CONFIG=${ROOT_BACKUP_CONFIG:-<unset>} ROOT_BACKUP_DATASET=${ROOT_BACKUP_DATASET:-<unset>}"
 
     # Check that root backup is configured
     if [ -z "${ROOT_BACKUP_POOL:-}" ] || [ -z "${ROOT_BACKUP_DATASET:-}" ]; then
-        log_message "prepare_root_mount: FAILED - root backup not configured" \
-                    "(ROOT_BACKUP_POOL or ROOT_BACKUP_DATASET is empty)"
+        log_message "prepare_root_mount: FAILED - root backup not configured (ROOT_BACKUP_POOL or ROOT_BACKUP_DATASET is empty)"
         return 1
     fi
 
@@ -494,9 +525,7 @@ function prepare_root_mount {
             log_message "prepare_root_mount: /mnt/root is already mounted (${ROOT_BACKUP_DATASET})"
             return 0
         fi
-        log_message "prepare_root_mount: FAILED - /mnt/root has the wrong" \
-                    "filesystem mounted: '${prm_mounted_src:-unknown}'" \
-                    "(expected ${ROOT_BACKUP_DATASET})"
+        log_message "prepare_root_mount: FAILED - /mnt/root has the wrong filesystem mounted: '${prm_mounted_src:-unknown}' (expected ${ROOT_BACKUP_DATASET})"
         return 1
     fi
 
@@ -526,8 +555,7 @@ function prepare_root_mount {
         fi
 
         if [ ! -e "/dev/disk/by-id/${prm_drive_id}" ]; then
-            log_message "prepare_root_mount: FAILED - drive not connected:" \
-                        "/dev/disk/by-id/${prm_drive_id} does not exist"
+            log_message "prepare_root_mount: FAILED - drive not connected: /dev/disk/by-id/${prm_drive_id} does not exist"
             return 1
         fi
 
@@ -567,8 +595,7 @@ function prepare_root_mount {
         return 0
     fi
 
-    log_message "prepare_root_mount: FAILED - /mnt/root is still not a mountpoint" \
-                "after all steps completed without error"
+    log_message "prepare_root_mount: FAILED - /mnt/root is still not a mountpoint after all steps completed without error"
     return 1
 }
 
@@ -611,8 +638,7 @@ function run_root_backup {
             rrb_mounted=$(sudo zfs get -H -o value mounted "${ROOT_BACKUP_DATASET:-}" 2>/dev/null)
             rrb_pool_state="${rrb_pool_state}, dataset mountpoint=${rrb_mountpoint:-unknown}, mounted=${rrb_mounted:-unknown}"
         fi
-        log_message "run_root_backup: SKIPPED - /mnt/root is not mounted" \
-                    "(pool ${ROOT_BACKUP_POOL:-<unset>}: ${rrb_pool_state})"
+        log_message "run_root_backup: SKIPPED - /mnt/root is not mounted (pool ${ROOT_BACKUP_POOL:-<unset>}: ${rrb_pool_state})"
         return 0
     fi
 
