@@ -53,6 +53,7 @@ daily.sh                    Main orchestrator
 ├── backup.sh               zbackup (local ZFS), syncoid (remote), rbackup (root)
 ├── zbackup.sh              ZFS send/receive to external backup drives
 ├── rbackup.sh              Root filesystem rsync to /mnt/root
+├── resync.sh               Re-establish rclone bisync tracking state
 ├── backup-configs/         Configuration files for zbackup (gitignored)
 │   └── *.conf.example      Example config templates
 ├── sensitive.sh            Sensitive file detection, rclone exclusion generation
@@ -92,12 +93,13 @@ These must be in PATH:
 
 - **`vpn`** -- WireGuard management (`vpn up` / `vpn down`)
 
-`zbackup` and `rbackup` are included in this repository. Create symlinks
-so they are available in PATH:
+`zbackup`, `rbackup`, and `resync` are included in this repository.
+Create symlinks so they are available in PATH:
 
 ```bash
 ln -sf ../../src/daily/zbackup.sh ~/opt/bin/zbackup
 ln -sf ../../src/daily/rbackup.sh ~/opt/bin/rbackup
+ln -sf ../../src/daily/resync.sh ~/opt/bin/resync
 ```
 
 ## Installation
@@ -131,10 +133,11 @@ cp sanoid.conf.example sanoid.conf
 sudo ./install.sh
 ```
 
-5. Create symlinks for backup scripts:
+5. Create symlinks for standalone scripts:
 ```bash
 ln -sf ../../src/daily/zbackup.sh ~/opt/bin/zbackup
 ln -sf ../../src/daily/rbackup.sh ~/opt/bin/rbackup
+ln -sf ../../src/daily/resync.sh ~/opt/bin/resync
 ```
 
 6. Install logrotate configuration:
