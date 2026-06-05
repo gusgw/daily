@@ -575,3 +575,148 @@ load 'test_helper'
 
     assert [ -n "$TEMP_CRIT_THRESHOLD" ]
 }
+
+# =============================================================================
+# Syncthing Health Check Tests
+# =============================================================================
+
+@test "check_syncthing function exists" {
+    source_project_file "bump/bump.sh"
+    source_project_file "settings.sh"
+    source_project_file "system.sh"
+    run type check_syncthing
+    assert_success
+    assert_output --partial "function"
+}
+
+@test "check_syncthing skips when no folders configured" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "system.sh"
+    SYNCTHING_FOLDERS=()
+
+    run check_syncthing
+    assert_success
+    assert_output --partial "No syncthing folders configured"
+}
+
+@test "check_syncthing warns when service is not active" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "system.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    SYNCTHING_FOLDERS=("$tmpdir")
+
+    # Mock systemctl --user to return failure
+    systemctl() {
+        if [[ "$1" == "--user" && "$2" == "is-active" ]]; then
+            return 1
+        fi
+    }
+    export -f systemctl
+
+    # Mock journalctl to return nothing
+    journalctl() { echo ""; }
+    export -f journalctl
+
+    # Mock find to return nothing
+    find() { :; }
+    export -f find
+
+    run check_syncthing
+    assert_failure
+    assert_output --partial "syncthing.service is not active"
+
+    rm -rf "$tmpdir"
+}
+
+@test "check_syncthing warns on missing folder" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "system.sh"
+    SYNCTHING_FOLDERS=("/nonexistent/path/for/test")
+
+    # Mock systemctl --user to return success
+    systemctl() {
+        if [[ "$1" == "--user" && "$2" == "is-active" ]]; then
+            return 0
+        fi
+    }
+    export -f systemctl
+
+    # Mock journalctl to return nothing
+    journalctl() { :; }
+    export -f journalctl
+
+    run check_syncthing
+    assert_failure
+    assert_output --partial "syncthing folder does not exist"
+}
+
+@test "check_syncthing reports sync-conflict files" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "system.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    SYNCTHING_FOLDERS=("$tmpdir")
+
+    # Create a sync-conflict file
+    touch "${tmpdir}/file.sync-conflict-20260213-123456-ABCDEFG"
+
+    # Mock systemctl --user to return success
+    systemctl() {
+        if [[ "$1" == "--user" && "$2" == "is-active" ]]; then
+            return 0
+        fi
+    }
+    export -f systemctl
+
+    # Mock journalctl to return nothing
+    journalctl() { :; }
+    export -f journalctl
+
+    run check_syncthing
+    assert_failure
+    assert_output --partial "1 sync-conflict file(s)"
+
+    rm -rf "$tmpdir"
+}
+
+@test "check_syncthing passes when healthy" {
+    source_project_file "bump/bump.sh"
+    set_stamp
+    source_project_file "system.sh"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    SYNCTHING_FOLDERS=("$tmpdir")
+
+    # Mock systemctl --user to return success
+    systemctl() {
+        if [[ "$1" == "--user" && "$2" == "is-active" ]]; then
+            return 0
+        fi
+    }
+    export -f systemctl
+
+    # Mock journalctl to return nothing
+    journalctl() { :; }
+    export -f journalctl
+
+    run check_syncthing
+    assert_success
+    assert_output --partial "Syncthing is healthy"
+
+    rm -rf "$tmpdir"
+}
+
+@test "SYNCTHING_FOLDERS array is built from env var" {
+    SYNCTHING_FOLDERS="/home/test/a /home/test/b"
+    source_project_file "settings.sh"
+
+    assert [ ${#SYNCTHING_FOLDERS[@]} -eq 2 ]
+}

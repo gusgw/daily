@@ -143,6 +143,20 @@ fi
 unset _cloud_syncs_str
 
 # =============================================================================
+#   SYNCTHING CONFIGURATION
+# =============================================================================
+
+#   Syncthing sync folders to monitor for conflicts
+#   Set SYNCTHING_FOLDERS in env.sh as space-delimited absolute paths
+#   e.g., export SYNCTHING_FOLDERS="/home/user/cloud /home/user/local"
+_syncthing_folders_str="${SYNCTHING_FOLDERS:-}"
+SYNCTHING_FOLDERS=()
+if [ -n "$_syncthing_folders_str" ]; then
+    IFS=' ' read -ra SYNCTHING_FOLDERS <<< "$_syncthing_folders_str"
+fi
+unset _syncthing_folders_str
+
+# =============================================================================
 #   SECURITY SETTINGS
 # =============================================================================
 
@@ -150,6 +164,12 @@ unset _cloud_syncs_str
 #   are not copied to remote backups or cloud storage
 SECRET_FOLDERS=( '.ssh' '.gnupg' '.cert' '.pki' '.password-store' )
 SECRET_FILES=( "*.asc" "*.key" "*.pem" "id_rsa*" "id_dsa*" "id_ed25519*" ".env" )
+
+#   Syncthing working files (excluded from rclone sync)
+SYNCTHING_FILES=( ".stignore" ".syncthing.*.tmp" )
+
+#   Syncthing config file (used to pause/unpause folders during rclone sync)
+SYNCTHING_CONFIG="${HOME}/.local/state/syncthing/config.xml"
 
 #   Also keep these from being sent to cloud storage
 SENSITIVE_FOLDERS=( '.git' '.stfolder' '.stversions' '.local'

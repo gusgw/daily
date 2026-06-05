@@ -485,6 +485,79 @@ function check_thermal_management {
 }
 
 # =============================================================================
+#   SYNCTHING HEALTH CHECK
+# =============================================================================
+
+function check_syncthing {
+    # Check syncthing service and sync health
+    #
+    # Checks:
+    #   - syncthing.service user unit is active
+    #   - No error-level messages in syncthing journal (last 24 hours)
+    #   - No .sync-conflict-* files in configured sync folders
+    #
+    # Returns:
+    #   0 - Syncthing is healthy
+    #   1 - Issues found (warnings emitted)
+
+    local cst_issues=0
+
+    log_message "check_syncthing"
+
+    # Check if syncthing is configured (folders set)
+    if [ ${#SYNCTHING_FOLDERS[@]} -eq 0 ]; then
+        log_message "No syncthing folders configured — skipping check"
+        return 0
+    fi
+
+    # Check syncthing user service is active
+    if systemctl --user is-active --quiet syncthing.service 2>/dev/null; then
+        log_message "syncthing.service is active"
+    else
+        log_message "WARNING: syncthing.service is not active"
+        cst_issues=$((cst_issues + 1))
+    fi
+
+    # Check syncthing journal for errors in the last 24 hours
+    local cst_errors
+    cst_errors=$(journalctl --user -u syncthing.service --since "24 hours ago" \
+        --priority=err --no-pager 2>/dev/null)
+    if [ -n "$cst_errors" ]; then
+        local cst_error_count
+        cst_error_count=$(echo "$cst_errors" | wc -l)
+        log_message "WARNING: ${cst_error_count} error(s) in syncthing journal (last 24h)"
+        cst_issues=$((cst_issues + 1))
+    fi
+
+    # Check for sync-conflict files in configured folders
+    local cst_total_conflicts=0
+    for cst_folder in "${SYNCTHING_FOLDERS[@]}"; do
+        if [ ! -d "$cst_folder" ]; then
+            log_message "WARNING: syncthing folder does not exist: ${cst_folder}"
+            cst_issues=$((cst_issues + 1))
+            continue
+        fi
+        local cst_conflicts
+        cst_conflicts=$(find "$cst_folder" -name "*.sync-conflict-*" 2>/dev/null | wc -l)
+        if [ "$cst_conflicts" -gt 0 ]; then
+            log_message "WARNING: ${cst_conflicts} sync-conflict file(s) in ${cst_folder}"
+            cst_total_conflicts=$((cst_total_conflicts + cst_conflicts))
+        fi
+    done
+
+    if [ "$cst_total_conflicts" -gt 0 ]; then
+        log_message "Total sync-conflict files: ${cst_total_conflicts}"
+        cst_issues=$((cst_issues + 1))
+    fi
+
+    if [ "$cst_issues" -eq 0 ]; then
+        log_message "Syncthing is healthy"
+    fi
+
+    return "$cst_issues"
+}
+
+# =============================================================================
 #   MAIN HEALTH CHECK ENTRY POINT
 # =============================================================================
 
@@ -546,6 +619,12 @@ function run_all_health_checks {
 
     # Thermal management
     if ! check_thermal_management; then
+        rahc_issues=$((rahc_issues + 1))
+    fi
+    print_rule; print_error_rule
+
+    # Syncthing health
+    if ! check_syncthing; then
         rahc_issues=$((rahc_issues + 1))
     fi
     print_rule; print_error_rule

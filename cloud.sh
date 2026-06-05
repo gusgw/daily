@@ -329,6 +329,30 @@ function run_all_cloud_syncs {
         return 0
     fi
 
+    # Pause syncthing folders that overlap with rclone sync paths
+    # to prevent simultaneous writes from corrupting data.
+    # Uses config.xml edits + service restart (no REST API needed).
+    local racs_syncthing_paused=false
+    if [ -f "${SYNCTHING_CONFIG:-}" ] && \
+       systemctl --user is-active --quiet syncthing.service 2>/dev/null; then
+        for config in "${CLOUD_SYNCS[@]}"; do
+            local racs_local
+            IFS=':' read -r racs_local _ _ _ <<< "$config"
+            local racs_norm_local="${racs_local%/}"
+            for sf in "${SYNCTHING_FOLDERS[@]}"; do
+                local racs_norm_sf="${sf%/}"
+                if [ "$racs_norm_local" = "$racs_norm_sf" ]; then
+                    racs_syncthing_paused=true
+                    break 2
+                fi
+            done
+        done
+        if [ "$racs_syncthing_paused" = true ]; then
+            log_message "Pausing syncthing during rclone sync"
+            systemctl --user stop syncthing.service
+        fi
+    fi
+
     local racs_failed=0
 
     for config in "${CLOUD_SYNCS[@]}"; do
@@ -338,6 +362,12 @@ function run_all_cloud_syncs {
             racs_failed=$((racs_failed + 1))
         fi
     done
+
+    # Restart syncthing if we stopped it
+    if [ "$racs_syncthing_paused" = true ]; then
+        log_message "Resuming syncthing after rclone sync"
+        systemctl --user start syncthing.service
+    fi
 
     if [ "$racs_failed" -gt 0 ]; then
         log_message "${racs_failed} cloud sync(s) failed"

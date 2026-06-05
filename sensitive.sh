@@ -123,6 +123,11 @@ function build_rclone_excludes {
         bre_excludes="${bre_excludes} --exclude ${pattern}/ --exclude **/${pattern}/"
     done
 
+    # Exclude syncthing working files
+    for pattern in "${SYNCTHING_FILES[@]}"; do
+        bre_excludes="${bre_excludes} --exclude ${pattern} --exclude **/${pattern}"
+    done
+
     # Output the exclude string (trimmed)
     echo "${bre_excludes# }"
 }
@@ -158,6 +163,14 @@ function get_rclone_exclude_array {
         echo "${pattern}/"
         echo "--exclude"
         echo "**/${pattern}/"
+    done
+
+    # Syncthing working files
+    for pattern in "${SYNCTHING_FILES[@]}"; do
+        echo "--exclude"
+        echo "${pattern}"
+        echo "--exclude"
+        echo "**/${pattern}"
     done
 }
 
