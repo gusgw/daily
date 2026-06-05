@@ -31,7 +31,7 @@ source "${SCRIPT_DIR}/bump/bump.sh"
 
 # Run the root filesystem rsync
 run_root_rsync() {
-    sudo rsync -aAXHxvP --numeric-ids --info=progress2 --delete \
+    sudo rsync -aAXHxv --numeric-ids --info=stats2 --delete \
         --exclude='/dev/*' \
         --exclude='/proc/*' \
         --exclude='/sys/*' \
@@ -45,6 +45,7 @@ run_root_rsync() {
         --exclude='/var/tmp/*' \
         --exclude='/var/cache/*' \
         --exclude='/var/log/*' \
+        --exclude='/var/lib/systemd/coredump/*' \
         --exclude='/swapfile' \
         --exclude='/.snapshots/*' \
         --exclude='/var/lib/docker/*' \

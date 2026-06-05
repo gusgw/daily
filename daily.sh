@@ -67,6 +67,14 @@ if ! flock -n 200; then
     exit 1
 fi
 
+# Log output to file and screen
+LOG_FILE="/var/log/daily-maintenance.log"
+if [ ! -f "$LOG_FILE" ]; then
+    sudo touch "$LOG_FILE"
+    sudo chown "$USER" "$LOG_FILE"
+fi
+exec > >(tee -a "$LOG_FILE") 2>&1
+
 # Set the folder where dependencies can be found.
 # This is needed when the script is run via a symbolic link.
 daily_path=$(dirname "$(realpath "$0")")

@@ -64,7 +64,7 @@ function run_rclone_bisync {
     # Build command
     local -a rrb_cmd=(rclone bisync)
     rrb_cmd+=(--copy-links)
-    rrb_cmd+=(--progress)
+    rrb_cmd+=(--stats-one-line --stats=1m)
     rrb_cmd+=(--transfers "${SIMULTANEOUS_TRANSFERS:-4}")
     rrb_cmd+=("${rrb_excludes[@]}")
 
@@ -132,7 +132,7 @@ function run_rclone_sync {
 
     # Build command
     local -a rrs_cmd=(rclone sync)
-    rrs_cmd+=(--progress)
+    rrs_cmd+=(--stats-one-line --stats=1m)
     rrs_cmd+=(--transfers "${SIMULTANEOUS_TRANSFERS:-4}")
     rrs_cmd+=("${rrs_excludes[@]}")
 
