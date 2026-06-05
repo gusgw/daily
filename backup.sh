@@ -102,7 +102,7 @@ function run_zfs_local_backup {
     fi
 
     # Run zbackup - it handles drive detection and pool import/export
-    zbackup --config "$rzlb_config" || {
+    throttle zbackup --config "$rzlb_config" || {
         local rc=$?
         # A destination that is merely absent is a SKIP, not a
         # failure: keep going, do not count it as an error.
@@ -409,7 +409,7 @@ function run_syncoid_replication {
     # --no-sync-snap: anchor on existing (sanoid) snapshots with long
     # retention rather than syncoid's own short-lived sync-snaps.
     local rsr_rc=0
-    syncoid --no-sync-snap "$rsr_source" "$rsr_dest" || rsr_rc=$?
+    throttle syncoid --no-sync-snap "$rsr_source" "$rsr_dest" || rsr_rc=$?
 
     if [ "$rsr_rc" -ne 0 ]; then
         report "$rsr_rc" "syncoid replication failed: ${rsr_source} -> ${rsr_dest}"
@@ -649,7 +649,7 @@ function run_root_backup {
     fi
 
     # Run rbackup
-    rbackup || {
+    throttle rbackup || {
         local rc=$?
         # Exit code 23 = partial transfer (some files couldn't be copied)
         # This is common for locked files during backup - treat as warning

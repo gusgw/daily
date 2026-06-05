@@ -35,20 +35,22 @@ function run_package_maintenance {
 
     # Checking for package changes
     log_message "checking for altered files..."
-    sudo pacman -Qkk 2> /dev/null 1>\
+    throttle sudo pacman -Qkk 2> /dev/null 1>\
             "${STAMP}-altered_system_file_list.txt" ||\
         report $? "checking for altered files"
 
     # Run regular package related tasks
     log_message "cleaning package cache..."
-    sudo pacman -Scc --noconfirm || report "$?" "cleaning package cache"
+    throttle sudo pacman -Scc --noconfirm || report "$?" "cleaning package cache"
+    log_message "pruning package cache to one version..."
+    throttle sudo paccache -rk1 || report "$?" "pruning package cache"
     log_message "updating system..."
-    sudo pacman -Syu --noconfirm || report "$?" "updating system"
+    throttle sudo pacman -Syu --noconfirm || report "$?" "updating system"
 
     # Update AUR packages
     log_message "updating AUR packages..."
     if command -v yay &>/dev/null; then
-        yay -Sua --noconfirm || report "$?" "updating AUR packages"
+        throttle yay -Sua --noconfirm || report "$?" "updating AUR packages"
     else
         log_message "yay not installed, skipping AUR updates"
     fi
@@ -93,7 +95,7 @@ function run_package_maintenance {
 
     # Check for unowned files
     log_message "checking for unowned files..."
-    sudo pacreport --unowned-files 1>\
+    throttle sudo pacreport --unowned-files 1>\
             "${STAMP}"-unowned_list.txt ||\
         report "$?" "finding unowned files"
 
@@ -101,7 +103,7 @@ function run_package_maintenance {
     log_message "archiving pacman database..."
     wd=$(pwd)
     if cd /var/lib/pacman/local; then
-        sudo tar -cjf "${wd}/${STAMP}-pacman_database.tar.bz2" . ||\
+        throttle sudo tar -cjf "${wd}/${STAMP}-pacman_database.tar.bz2" . ||\
             report "$?" "saving pacman database"
     else
         report "$?" "changing to pacman database directory"

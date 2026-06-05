@@ -10,8 +10,23 @@
 # =============================================================================
 
 #   Limits for parallel work
-MAX_SUBPROCESSES=16
-SIMULTANEOUS_TRANSFERS=32
+#   rclone parallel transfers. Was 32, which saturated the single NVMe and
+#   all CPU cores and starved the Wayland session into unresponsiveness when
+#   daily.sh ran next to an interactive session (2026-06-05). rclone's own
+#   default is 4.
+SIMULTANEOUS_TRANSFERS=4
+
+#   throttle: run a heavy maintenance command at low priority so it yields
+#   to anything interactive (the Wayland session, a shell). `nice -n 19`
+#   lowers CPU priority and is effective on every I/O scheduler. `ionice
+#   -c 3` (idle) lowers disk priority but only takes effect under the BFQ
+#   scheduler; nvme0n1 currently uses `none`, where it is a harmless no-op,
+#   so the real disk relief comes from the lower SIMULTANEOUS_TRANSFERS
+#   above. The wrapper passes the wrapped command's exit status straight
+#   through (verified: `nice -n 19 ionice -c 3 true` returns 0).
+throttle() {
+    nice -n 19 ionice -c 3 "$@"
+}
 
 #   Set a wait time in seconds for any task that is attempted repeatedly
 WAIT=5.0

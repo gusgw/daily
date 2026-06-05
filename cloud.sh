@@ -80,7 +80,7 @@ function run_rclone_bisync {
     log_message "Running: ${rrb_cmd[*]}"
 
     # Run the sync
-    "${rrb_cmd[@]}" || {
+    throttle "${rrb_cmd[@]}" || {
         local rc=$?
         # bisync returns 2 for "resync required" which isn't a real error
         if [ "$rc" -eq 2 ]; then
@@ -145,7 +145,7 @@ function run_rclone_sync {
 
     log_message "Running: ${rrs_cmd[*]}"
 
-    "${rrs_cmd[@]}" || {
+    throttle "${rrs_cmd[@]}" || {
         local rc=$?
         report "$rc" "rclone sync failed"
         return "$rc"
@@ -204,7 +204,7 @@ function run_rclone_copy {
 
     log_message "Running: ${rrc_cmd[*]}"
 
-    "${rrc_cmd[@]}" || {
+    throttle "${rrc_cmd[@]}" || {
         local rc=$?
         report "$rc" "rclone copy failed"
         return "$rc"
