@@ -266,16 +266,14 @@ function run_cloud_sync {
     log_setting "cloud sync mode" "$rcs_mode"
 
     # For SFTP remotes, check host is reachable before attempting sync
+    # Use the rclone remote name as the SSH host so that ~/.ssh/config
+    # entries (Host toby, etc.) are matched for key selection.
     local rcs_remote_type
     rcs_remote_type=$(rclone config show "$rcs_remote_name" 2>/dev/null | grep '^type' | cut -d' ' -f3)
     if [ "$rcs_remote_type" = "sftp" ]; then
-        local rcs_sftp_host rcs_sftp_user
-        rcs_sftp_host=$(rclone config show "$rcs_remote_name" 2>/dev/null | grep '^host' | cut -d' ' -f3)
-        rcs_sftp_user=$(rclone config show "$rcs_remote_name" 2>/dev/null | grep '^user' | cut -d' ' -f3)
-        local rcs_ssh_target="${rcs_sftp_user:+${rcs_sftp_user}@}${rcs_sftp_host}"
-        log_message "SFTP remote detected, checking host reachability: ${rcs_ssh_target}"
-        if ! check_host_reachable "$rcs_ssh_target"; then
-            log_message "skipping sync - ${rcs_ssh_target} not reachable"
+        log_message "SFTP remote detected, checking host reachability: ${rcs_remote_name}"
+        if ! check_host_reachable "$rcs_remote_name"; then
+            log_message "skipping sync - ${rcs_remote_name} not reachable"
             return 0
         fi
     fi
